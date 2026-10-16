@@ -1,6 +1,6 @@
-"""Repository guards: the daemon runs on the standard library alone, and no Korean is written into
-code, tests, scripts, pages, the overlay app or the deploy files (only the web unit holds language
-packs; this one answers in English)."""
+"""Repository guards: the daemon runs on the standard library alone, and no Korean is written into any
+text file of the checkout, from code and tests to the documents and root files (only the web unit
+holds language packs; this one answers in English)."""
 import ast
 import os
 import re
@@ -10,7 +10,8 @@ import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(ROOT, "src")
-GUARDED = ("src", "tests", "bin", "web", "macos", "deploy")
+# Folders holding version control, caches and build output, not files of the repository.
+UNGUARDED_DIRS = {".git", "__pycache__", "dist", ".build"}
 # Hangul Jamo, Compatibility Jamo, Jamo Extended-A, Syllables and Jamo Extended-B, built from code
 # points so this file holds none of the characters it looks for.
 HANGUL_RANGES = ((0x1100, 0x11FF), (0x3130, 0x318F), (0xA960, 0xA97F), (0xAC00, 0xD7AF), (0xD7B0, 0xD7FF))
@@ -47,21 +48,20 @@ class DependencyGuardTest(unittest.TestCase):
 
 
 class NoHangulGuardTest(unittest.TestCase):
-    def test_no_hangul_in_guarded_files(self):
+    def test_no_hangul_in_any_file_of_the_checkout(self):
         found = []
-        for top in GUARDED:
-            for folder, dirs, files in os.walk(os.path.join(ROOT, top)):
-                dirs[:] = [d for d in dirs if d != "__pycache__"]
-                for name in files:
-                    path = os.path.join(folder, name)
-                    try:
-                        with open(path, encoding="utf-8") as f:
-                            text = f.read()
-                    except UnicodeDecodeError:
-                        continue
-                    for n, line in enumerate(text.splitlines(), 1):
-                        if HANGUL.search(line):
-                            found.append(f"{os.path.relpath(path, ROOT)}:{n}")
+        for folder, dirs, files in os.walk(ROOT):
+            dirs[:] = [d for d in dirs if d not in UNGUARDED_DIRS]
+            for name in files:
+                path = os.path.join(folder, name)
+                try:
+                    with open(path, encoding="utf-8") as f:
+                        text = f.read()
+                except (UnicodeDecodeError, OSError):
+                    continue
+                for n, line in enumerate(text.splitlines(), 1):
+                    if HANGUL.search(line):
+                        found.append(f"{os.path.relpath(path, ROOT)}:{n}")
 
         self.assertEqual(found, [])
 

@@ -10,7 +10,7 @@ The file is read once, at start. The two TTL keys can also change while running,
 Every other key changes only by editing the file and restarting.
 
 `config.example.json` is a starting point for a host; it leaves out `projects_globs`,
-`project_prefixes` and `node`, so those run on their defaults.
+`project_prefixes`, `node` and `siren_file`, so those run on their defaults.
 
 | Key | Default | Changes | Meaning |
 | --- | --- | --- | --- |

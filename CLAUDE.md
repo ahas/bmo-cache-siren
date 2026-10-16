@@ -20,7 +20,8 @@ porting. Read the document for an area before changing it.
 
 - The daemon runs on the Python standard library alone: no third-party package and no `bmo-*`
   package. `pyproject.toml` declares no dependencies, and a test enforces both.
-- No Korean in code, comments, strings, tests, scripts, pages or deploy files; a test enforces it.
+- No Korean in any file of the checkout: code, comments, strings, tests, scripts, pages, deploy files,
+  documents and root files alike; a test walks the whole checkout and enforces it.
 - Tests live in `tests/`. Check and test with:
   - `python3 -B -m py_compile src/*.py tests/*.py`
   - `python3 -B -m unittest discover -s tests`

@@ -44,6 +44,10 @@ The demo page, `web/demo.html`, which draws fixed sample rows without the daemon
 Only `siren_on.png` and `siren_off.png`, read from the data directory, as `image/png`. Any other name
 is answered 404 with `{"ok": false, "error": "asset not allowed"}`.
 
+Neither image ships with this repository; a host that wants them places them in the data directory.
+When the named image is missing or cannot be read, the answer is 500 with `ok` false, `error` the
+operating system's message, and `file` the absolute path that was tried.
+
 ### GET `/health`
 
 | Field | Type | Meaning |
@@ -169,8 +173,10 @@ mode → model prefix or `*` → positive integer seconds).
 
 POST takes a body with one or both of those keys. Each key given replaces that key whole, applied
 live at once and then merged into the config file the process was started with by an atomic replace;
-every other key in the file is left as written. A mode with an empty table means that provider has
-no uniform cache contract, and its requests are never judged `ttl_expired`.
+every other key in the file is left as written. A config path that is a symbolic link is written
+through: the link's final target is replaced, the temporary file is made beside that target, and the
+link itself stays in place. A mode with an empty table means that provider has no uniform cache
+contract, and its requests are never judged `ttl_expired`.
 
 Success: 200 with `ok` (true), `persisted` (whether the file was written) and the two keys as now held.
 

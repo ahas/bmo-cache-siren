@@ -18,7 +18,6 @@
   "voice": false,
   "voice_cmd": ["/path/to/your/tts.sh", "{text}"],
   "sound": true,
-  "siren_file": "~/.claude/cache-siren/warning.mp3",
   "quota_url": "http://localhost:9200/api/claude",
   "heartbeat_url": "",
   "ring": 600,

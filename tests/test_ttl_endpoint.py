@@ -4,6 +4,7 @@ and restarts the service keeps working."""
 import json
 import os
 import sys
+import tempfile
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -49,6 +50,26 @@ class TtlEndpointTest(unittest.TestCase):
         on_disk = siren.config_file()
         self.assertEqual(on_disk, {**written, "ttl_by_mode_model_s": {"claude-code": {"*": 300}}})
         self.assertFalse([n for n in os.listdir(os.path.dirname(siren.config_path)) if ".tmp" in n])
+
+    def test_post_writes_through_a_symlinked_config_to_its_target(self):
+        siren = SirenServer(self, config={"ttl_s": 3600})
+        elsewhere = tempfile.TemporaryDirectory()
+        self.addCleanup(elsewhere.cleanup)
+        target = os.path.join(elsewhere.name, "config.json")
+        written = {"port": 9022, "ttl_s": 3600}
+        with open(target, "w") as f:
+            json.dump(written, f)
+        os.unlink(siren.config_path)
+        os.symlink(target, siren.config_path)
+
+        siren.post("/ttl", {"ttl_s": 900})
+
+        self.assertTrue(os.path.islink(siren.config_path))
+        self.assertEqual(os.readlink(siren.config_path), target)
+        with open(target) as f:
+            self.assertEqual(json.load(f), {**written, "ttl_s": 900})
+        for folder in (elsewhere.name, os.path.dirname(siren.config_path)):
+            self.assertFalse([n for n in os.listdir(folder) if ".tmp" in n])
 
     def test_a_restart_reads_back_what_was_posted(self):
         siren = SirenServer(self, config={"ttl_s": 3600})

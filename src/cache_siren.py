@@ -199,7 +199,9 @@ def ttl_body(body):
 
 
 def persist_config(path, updates):
-    """Merge only the given keys into the config file, by an atomic replace; every other key stays as written."""
+    """Merge only the given keys into the config file, by an atomic replace; every other key stays as written.
+    A symlinked config is written through to its target, so the link stays a link."""
+    path = os.path.realpath(path)
     try:
         with open(path) as f:
             current = json.load(f)

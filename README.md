@@ -48,7 +48,7 @@ providers marks the active one, and the daemon reads that slot.
 | `quota`, `error`, `compact` | a quota stop, an API error, a compaction | yellow |
 | `cmd` | a local command | info |
 | `notice` | an informational line | info |
-| `request` | a request posted by a runner that leaves no transcript | by the same thresholds |
+| `request` | a posted request whose usage is unknown (note `usage_unavailable`), or a posted request after a session's first that read nothing from cache and stayed under 20K new | info |
 | `burst` | new tokens across all sessions within 60 seconds reach 500K | red |
 
 A red request or burst sounds the siren, once per session per cooldown. A request served by a
