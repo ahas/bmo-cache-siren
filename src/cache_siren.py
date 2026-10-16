@@ -45,6 +45,9 @@ HTTP 127.0.0.1:<port>  (default 9022)
   GET  /            overlay page            GET /events?limit=N&since=SEQ   GET /stream (SSE)
   GET  /health      GET /stats              GET|POST /ctl  {visible,muted,opacity,show_local,page}
   POST /test-siren  (for checking — really sounds the siren and voice)
+  GET|POST /ttl     {ttl_s, ttl_by_mode_model_s} (POST applies live and merges into the config file)
+  POST /events      one request of a loopback runner that leaves no transcript
+Every route, body and field is stated in docs/api.md; every config key in docs/configuration.md.
 
 Log: ~/.claude/cache-siren/cache-siren.log (structured [ts] [cache-siren] [LEVEL] msg {json})
 · canonical events events.jsonl · offsets state.json
@@ -136,9 +139,85 @@ MODEL_NAMES = [("claude-fable-5-1", "Fable 5.1"), ("claude-fable-5", "Fable 5"),
                ("claude-sonnet-4", "Sonnet 4"), ("claude-haiku-4-5", "Haiku 4.5"), ("claude-haiku", "Haiku")]
 
 CFG = dict(DEFAULT_CONFIG)
+CONFIG_PATH = None                # the file the config was read from at start; POST /ttl merges into it
 QUIET = False
 _log_lock = threading.Lock()
 _events_lock = threading.Lock()   # serialises the events.jsonl append (emit) and the prune rewrite
+_config_lock = threading.Lock()   # serialises TTL updates, so the live table and the file agree on the last one
+
+TTL_KEYS = ("ttl_s", "ttl_by_mode_model_s")
+
+
+class TtlError(ValueError):
+    """A TTL body that cannot be applied; args[0] is the English error code the caller gets."""
+
+
+def load_config(path):
+    """Read the config file once, at start, over the defaults. A missing file is created with the defaults."""
+    global CONFIG_PATH
+    CONFIG_PATH = path
+    try:
+        with open(path) as f:
+            CFG.update(json.load(f))
+    except FileNotFoundError:
+        with open(path, "w") as f:
+            json.dump(DEFAULT_CONFIG, f, ensure_ascii=False, indent=2)
+        log("INFO", "config created with defaults", path=path)
+    except Exception as e:
+        log("ERROR", "config load failed — defaults", err=str(e))
+
+
+def _positive_int(value):
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def ttl_body(body):
+    """Check a TTL body: one or both TTL keys, a positive integer of seconds for ttl_s and a
+    {mode: {model prefix or "*": seconds}} table with non-empty string keys. An empty mode table
+    is allowed: it says that provider has no uniform cache contract."""
+    if not isinstance(body, dict):
+        raise TtlError("body_not_object")
+    if any(k not in TTL_KEYS for k in body):
+        raise TtlError("unknown_field")
+    if not body:
+        raise TtlError("nothing_to_set")
+    if "ttl_s" in body and not _positive_int(body["ttl_s"]):
+        raise TtlError("ttl_s_not_positive_integer")
+    if "ttl_by_mode_model_s" in body:
+        table = body["ttl_by_mode_model_s"]
+        if not isinstance(table, dict):
+            raise TtlError("ttl_table_not_object")
+        for mode, rows in table.items():
+            if not isinstance(mode, str) or not mode or not isinstance(rows, dict):
+                raise TtlError("ttl_table_mode_invalid")
+            for prefix, seconds in rows.items():
+                if not isinstance(prefix, str) or not prefix:
+                    raise TtlError("ttl_table_model_invalid")
+                if not _positive_int(seconds):
+                    raise TtlError("ttl_table_seconds_not_positive_integer")
+    return {k: body[k] for k in TTL_KEYS if k in body}
+
+
+def persist_config(path, updates):
+    """Merge only the given keys into the config file, by an atomic replace; every other key stays as written."""
+    try:
+        with open(path) as f:
+            current = json.load(f)
+    except FileNotFoundError:
+        current = {}
+    if not isinstance(current, dict):
+        raise ValueError("config file does not hold an object")
+    current.update(updates)
+    tmp = f"{path}.tmp-{os.getpid()}"
+    try:
+        with open(tmp, "w") as f:
+            json.dump(current, f, ensure_ascii=False, indent=2)
+            f.write("\n")
+        os.replace(tmp, path)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
 
 
 def load_recent_events(path, limit):
@@ -812,6 +891,24 @@ class Engine:
             except Exception as e:
                 log("ERROR", "voice failed", err=str(e))
 
+    # ---- cache lifetime
+    def ttl(self):
+        with self.cond:
+            return {k: CFG[k] for k in TTL_KEYS}
+
+    def set_ttl(self, updates):
+        """Apply a checked TTL body live (attribution reads CFG at each request), then merge it into the
+        config file so a restart keeps it. Returns whether the file was written."""
+        with _config_lock:
+            with self.cond:
+                before = {k: CFG[k] for k in TTL_KEYS}
+                CFG.update(updates)
+            log("INFO", "ttl set", before=before, after={k: CFG[k] for k in TTL_KEYS}, config=CONFIG_PATH)
+            if not CONFIG_PATH:
+                return False
+            persist_config(CONFIG_PATH, updates)
+            return True
+
     # ---- stats
     def stats(self):
         now = time.time()
@@ -1033,6 +1130,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._json(200, ENGINE.stats())
         if path == "/ctl":
             return self._json(200, ENGINE.ctl)
+        if path == "/ttl":
+            return self._json(200, ENGINE.ttl())
         if path == "/events":
             lim = int(q.get("limit", "80"))
             since = int(q.get("since", "0"))
@@ -1068,11 +1167,25 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if n > 65536:
             return self._json(413, {"ok": False, "error": "body too large"})
         raw = self.rfile.read(n) if n else b""
+        parsed = True
         try:
             body = json.loads(raw or b"{}")
         except Exception:
-            body = {}
+            body, parsed = {}, False
         path = self.path.split("?")[0]
+        if path == "/ttl":
+            if not parsed:
+                return self._json(400, {"ok": False, "error": "body_not_json"})
+            try:
+                updates = ttl_body(body)
+            except TtlError as e:
+                return self._json(400, {"ok": False, "error": e.args[0]})
+            try:
+                persisted = ENGINE.set_ttl(updates)
+            except Exception as e:
+                log("ERROR", "ttl persist failed", err=str(e), config=CONFIG_PATH)
+                return self._json(500, {"ok": False, "error": "config_write_failed", "applied": True, **ENGINE.ttl()})
+            return self._json(200, {"ok": True, "persisted": persisted, **ENGINE.ttl()})
         if path == "/events":
             try:
                 ev = ENGINE.external(body)
@@ -1108,13 +1221,7 @@ def main():
     a = ap.parse_args()
     QUIET = a.quiet
     os.makedirs(RUN_DIR, exist_ok=True)
-    try:
-        CFG.update(json.load(open(a.config)))
-    except FileNotFoundError:
-        json.dump(DEFAULT_CONFIG, open(a.config, "w"), ensure_ascii=False, indent=2)
-        log("INFO", "config created with defaults", path=a.config)
-    except Exception as e:
-        log("ERROR", "config load failed — defaults", err=str(e))
+    load_config(a.config)
     log("INFO", "start", pid=os.getpid(), port=CFG["port"], cfg={k: CFG[k] for k in ("yellow_new_tokens", "red_new_tokens", "burst_red_tokens", "poll_s")})
     ensure_siren_wav()
     ENGINE = Engine()
