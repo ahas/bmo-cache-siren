@@ -1,0 +1,15 @@
+# How this repository is checked, tested and deployed. The format is provisional until bmo-testbed
+# defines the convention every repository follows. The service runs from its source tree, so there is
+# no build step; the installer copies the tree to the install root and installs the unit from there.
+kind = "service"
+runtime = "python3"
+check = "python3 -B -m py_compile src/*.py tests/*.py"
+test = "python3 -B -m unittest discover -s tests"
+build = "none"
+install_root = "~/.local/lib/cache-siren"
+unit = "deploy/systemd/cache-siren.service"
+# Passed to the daemon with --config. It lives in the install root and is kept across installs:
+# the TTL endpoint writes back into it.
+config = "~/.local/lib/cache-siren/config.json"
+health = "http://127.0.0.1:9022/health"
+version_from = "pyproject.toml"

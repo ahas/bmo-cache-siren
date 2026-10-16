@@ -4,3 +4,8 @@ version = "0.1.0"
 description = "Live watch of prompt-cache hits and new tokens per request, with a siren on sudden re-prefills"
 requires-python = ">=3.11"
 dependencies = []
+
+# unittest has no table of its own; this is the discovery the test command in deploy.toml runs.
+[tool.unittest]
+start-directory = "tests"
+pattern = "test_*.py"
