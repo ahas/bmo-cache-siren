@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>cache-siren demo</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+:root{--bg:#0d1117;--fg:#d5dbe3;--dim:#7d8590;--line:#22272e;--warm:#2ea043;--yellow:#d29922;--red:#f85149;--blue:#58a6ff;--purple:#bc8cff;--mono:"SF Mono",Menlo,monospace}
+html,body{margin:0;background:var(--bg);color:var(--fg);font:11.5px/1.35 var(--mono);height:100%;overflow-x:hidden;-webkit-user-select:none}
+#hdr{display:flex;align-items:center;gap:10px;padding:5px 8px;border-bottom:1px solid var(--line);background:#2a1a0a;position:sticky;top:0;-webkit-app-region:drag}
+#hdr .t{font-weight:700;color:#ffd479}
+#hdr .sub{color:var(--dim)}
+#hdr .sp{flex:1}
+#hdr button{background:#21262d;color:var(--fg);border:1px solid #30363d;border-radius:4px;font:inherit;padding:1px 8px;cursor:pointer;-webkit-app-region:no-drag}
+#hdr button.live{background:#183a2a;border-color:var(--warm);color:#7ee2a8}
+.sec{padding:6px 8px 2px;color:#ffcf8f;font-weight:700;border-bottom:1px solid #161b22;background:#15120c}
+.sec small{color:var(--dim);font-weight:400;margin-left:6px}
+.row{display:grid;grid-template-columns:58px 132px 70px 66px 74px 64px 1fr;gap:6px;padding:3px 8px;border-bottom:1px solid #161b22;white-space:nowrap;overflow:hidden}
+.row .ts{color:var(--dim)}.row .sess{overflow:hidden;text-overflow:ellipsis}.row .sess .sid{color:var(--dim)}.row .sess .ag{color:var(--purple)}
+.row .m{color:var(--blue)}
+.row .k{font-weight:700;text-align:center;border-radius:3px;padding:0 3px}
+.k.warm{color:var(--warm)}.k.growth{color:var(--yellow)}.k.start{color:var(--blue)}.k.cold{color:#fff;background:var(--red)}.k.refusal{color:#fff;background:#a371f7}.k.quota{color:#fff;background:var(--yellow)}
+.row .new{text-align:right}.row .new.y{color:var(--yellow)}.row .new.r{color:var(--red);font-weight:700}
+.row .rd{text-align:right;color:var(--dim)}
+.row .req{color:var(--dim);overflow:hidden;text-overflow:ellipsis}.row .req .note{color:var(--fg);margin-right:6px}
+.row.lv-red{background:#2b0f0f}.row.lv-yellow{background:#2a2410}
+.note-box{padding:5px 8px;color:var(--dim);font-size:10.5px;border-bottom:1px solid #161b22}
+.note-box b{color:#ffcf8f}
+</style></head><body>
+<div id="hdr">
+  <span class="t">Frozen screen · example</span><span class="sub">not live — two recorded incidents</span>
+  <span class="sp"></span>
+  <button class="live" onclick="goLive()">▶ back to live</button>
+</div>
+<div id="list"></div>
+<script>
+const ROWS=[
+ {sec:"① 5-hour limit → re-prefill on resume", note:"A session that stops at its limit and resumes after the reset finds a 2-hour gap past the 1-hour cache lifetime, so its whole context goes up again. The s5 (Sonnet 5) sessions re-prefill at the same moment too."},
+ {t:"11:33:29",p:"app-ops",sid:"c96654d0",m:"Fable 5.1",k:"quota",new:0,rd:0,note:"session limit",req:"You've hit your session limit · resets 12:40pm",lv:"yellow"},
+ {t:"12:40:42",p:"web-s5",sid:"—",m:"Sonnet 5",k:"cold",new:247727,rd:0,note:"ttl_expired",req:"⌨ Your claude.ai usage limit has reset",lv:"red"},
+ {t:"12:41:11",p:"app-ops",sid:"c96654d0",m:"Fable 5.1",k:"cold",new:701478,rd:0,note:"ttl_expired",req:"⌨ let's continue",lv:"red"},
+ {t:"13:15:33",p:"api-s5",sid:"92e3f866",m:"Sonnet 5",k:"growth",new:266750,rd:38401,note:"ttl_expired",req:"✉ Another Claude session sent a message",lv:"red"},
+ {sec:"② cyber hook → model downgrade → re-prefill", note:"When Fable 5.1 wrongly flags a request as cyber and refuses it, the CLI switches the session to Opus 4.8. The cache is per model, so a model switch sends the whole context up again."},
+ {t:"13:00:07",p:"app-ops",sid:"c96654d0",m:"Fable 5.1",k:"refusal",new:0,rd:0,note:"cyber → Opus 4.8 (scope session)",req:"safeguard refusal · automatic model switch",lv:"red"},
+ {t:"13:01:48",p:"app-ops",sid:"c96654d0",m:"Opus 4.8",k:"growth",new:630560,rd:29464,note:"model_switch",req:"⌨ check the previous session's record first…",lv:"red"},
+ {t:"14:42:45",p:"api",sid:"9dba4417",m:"Fable 5.1",k:"refusal",new:0,rd:0,note:"cyber → Opus 4.8 (scope session)",req:"safeguard refusal · automatic model switch",lv:"red"},
+ {t:"14:42:51",p:"api",sid:"9dba4417",m:"Opus 4.8",k:"cold",new:278622,rd:0,note:"model_switch",req:"⚙ Bash",lv:"red"},
+];
+const fmt=n=>n>=1e6?(n/1e6).toFixed(2)+'M':n>=1000?(n/1000).toFixed(n>=100000?0:1)+'K':String(n);
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const list=document.getElementById('list');
+for(const r of ROWS){
+  if(r.sec){
+    const h=document.createElement('div');h.className='sec';h.innerHTML=esc(r.sec);list.appendChild(h);
+    const n=document.createElement('div');n.className='note-box';n.innerHTML='<b>why</b> '+esc(r.note);list.appendChild(n);
+    continue;
+  }
+  const el=document.createElement('div');el.className='row lv-'+(r.lv||'');
+  const lvl=r.new>=100000?'r':r.new>=20000?'y':'';
+  el.innerHTML=`<span class="ts">${r.t}</span><span class="sess" title="${r.p}">${esc(r.p)} <span class="sid">${r.sid}</span></span>`+
+    `<span class="m">${r.m}</span><span class="k ${r.k}">${r.k}</span>`+
+    `<span class="new ${lvl}">${r.new?'+'+fmt(r.new):''}</span><span class="rd">${r.rd?fmt(r.rd):''}</span>`+
+    `<span class="req"><span class="note">${esc(r.note||'')}</span>${esc(r.req||'')}</span>`;
+  list.appendChild(el);
+}
+function goLive(){ fetch('/ctl',{method:'POST',body:JSON.stringify({page:'/'})}).catch(()=>{}); }
+</script></body></html>

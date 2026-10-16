@@ -1,0 +1,27 @@
+{
+  "port": 9022,
+  "poll_s": 1.0,
+  "recent_hours": 6,
+  "backfill_hours": 3,
+  "yellow_new_tokens": 20000,
+  "red_new_tokens": 100000,
+  "burst_window_s": 60,
+  "burst_red_tokens": 500000,
+  "siren_cooldown_s": 20,
+  "ttl_s": 3600,
+  "ttl_by_mode_model_s": {
+    "claude-code": { "claude-sonnet-5": 300, "*": 3600 },
+    "codex": { "gpt-5.6": 1800 },
+    "openrouter": {}
+  },
+  "prefix_reuse_min": 0.5,
+  "voice": false,
+  "voice_cmd": ["/path/to/your/tts.sh", "{text}"],
+  "sound": true,
+  "siren_file": "~/.claude/cache-siren/warning.mp3",
+  "quota_url": "http://localhost:9200/api/claude",
+  "heartbeat_url": "",
+  "ring": 600,
+  "retention_days": 7,
+  "prune_every_s": 21600
+}

@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>cache-siren</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+:root{--bg:#0d1117;--fg:#d5dbe3;--dim:#7d8590;--line:#22272e;--warm:#2ea043;--yellow:#d29922;--red:#f85149;--blue:#58a6ff;--purple:#bc8cff;--mono:"SF Mono",Menlo,monospace}
+html,body{margin:0;background:var(--bg);color:var(--fg);font:11.5px/1.35 var(--mono);height:100%;overflow:hidden;-webkit-user-select:none}
+body.alarm{animation:flash .5s ease-in-out 5}
+@keyframes flash{0%,100%{background:var(--bg)}50%{background:#5a1a1a}}
+#hdr{display:flex;align-items:center;gap:10px;padding:5px 8px;border-bottom:1px solid var(--line);background:#161b22;position:sticky;top:0;-webkit-app-region:drag}
+#hdr .t{font-weight:700;color:#fff;letter-spacing:.5px}
+#hdr .q{color:var(--fg)}#hdr .q b{font-size:13px}
+#hdr .q.warn b{color:var(--yellow)}#hdr .q.bad b{color:var(--red)}
+#spark{display:flex;align-items:flex-end;gap:1px;height:16px}
+#spark i{display:block;width:5px;background:var(--blue);min-height:1px;border-radius:1px}
+#spark i.y{background:var(--yellow)}#spark i.r{background:var(--red)}
+#hdr .sp{flex:1}
+#budget{display:flex;align-items:center;gap:7px;padding:3px 8px;border-bottom:1px solid var(--line);background:#0f141a}
+#budget .lbl{color:var(--dim);white-space:nowrap}
+#budget .lbl b{color:var(--fg)}
+#bar{flex:1;height:12px;border-radius:3px;overflow:hidden;display:flex;background:#161b22;border:1px solid #21262d}
+#bar .seg{height:100%;min-width:1px}
+#bar .head{height:100%;flex:1;background:repeating-linear-gradient(45deg,#12161c,#12161c 4px,#0f141a 4px,#0f141a 8px)}
+#budget .leg{display:flex;gap:8px;overflow:hidden;white-space:nowrap;max-width:46%}
+#budget .leg span{color:var(--dim)}#budget .leg i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:3px;vertical-align:middle}
+#hdr button{background:#21262d;color:var(--fg);border:1px solid #30363d;border-radius:4px;font:inherit;padding:1px 6px;cursor:pointer}
+#hdr button.on{background:#264f78;border-color:var(--blue)}
+#hdr button.mute{padding:1px 4px;line-height:0}
+#hdr button.mute img{height:16px;width:16px;vertical-align:middle;display:block}
+#hdr button.mute.on{background:#3a1414;border-color:var(--red)}
+#list{overflow-y:auto;height:calc(100% - 30px)}
+.row{display:grid;grid-template-columns:58px 118px 66px 62px 70px 62px 1fr;gap:6px;padding:2px 8px;border-bottom:1px solid #161b22;white-space:nowrap;overflow:hidden;cursor:default}
+.row:hover{background:#161b22}
+.row .ts{color:var(--dim)}.row .sess{color:var(--fg);overflow:hidden;text-overflow:ellipsis}.row .sess .sid{color:var(--dim)}.row .sess .ag{color:var(--purple)}
+.row .m{color:var(--blue)}
+.row .k{font-weight:700;text-align:center;border-radius:3px;padding:0 3px}
+.k.warm{color:var(--warm)}.k.growth{color:var(--yellow)}.k.start{color:var(--blue)}.k.cold{color:#fff;background:var(--red)}.k.refusal{color:#fff;background:#a371f7}.k.quota{color:#fff;background:var(--yellow)}.k.error{color:var(--red)}.k.cmd,.k.compact,.k.notice{color:var(--dim)}.k.burst{color:#fff;background:var(--red)}
+.row .new{text-align:right}.row .new.y{color:var(--yellow)}.row .new.r{color:var(--red);font-weight:700}
+.row .rd{text-align:right;color:var(--dim)}
+.row .req{color:var(--dim);overflow:hidden;text-overflow:ellipsis}.row .req .note{color:var(--fg);margin-right:6px}
+.row.local{opacity:.45}
+.row.lv-red{background:#2b0f0f}.row.lv-yellow{background:#2a2410}
+.row.new-in{animation:pop .6s}
+@keyframes pop{from{background:#264f78}to{}}
+.det{grid-column:1/-1;white-space:pre-wrap;color:var(--dim);font-size:10.5px;padding:2px 0 4px 58px}
+/* In a narrow window the six fixed columns are wider than the window and squeeze the content
+   column (1fr) to nothing. Then the time goes up to its own line and the rest stands below it,
+   so the content uses the full width of the window. */
+@media (max-width: 640px){
+  .row{grid-template-columns:118px 66px 62px 70px 1fr;}
+  .row .ts{grid-column:1/-1}
+  .row .req{grid-column:1/-1;white-space:normal}
+  .row .rd{display:none}
+  .det{padding-left:0}
+}
+#empty{padding:20px;color:var(--dim);text-align:center}
+</style></head><body>
+<div id="hdr">
+  <span class="t">cache-siren</span>
+  <span class="q" id="q5">5h <b>–</b></span>
+  <span class="q" id="q7">7d <b>–</b></span>
+  <span class="q" id="rate">60s <b>0</b></span>
+  <span id="spark"></span>
+  <span class="q" id="sess"><b>0</b> sess</span>
+  <span class="sp"></span>
+  <button id="bLocal" title="show local sessions">local</button>
+  <button id="bMute" class="mute" title="siren and voice on/off"><img id="muteImg" src="/asset/siren_on.png" alt="siren"></button>
+  <button id="bHide" title="hide (back with cache-siren show)">—</button>
+</div>
+<div id="budget" title="5-hour quota budget: filled = % used so far, coloured by session share, hatched = headroom left (estimate)">
+  <span class="lbl">5h <b id="bUsed">–</b> used</span>
+  <div id="bar"></div>
+  <span class="leg" id="bLeg"></span>
+</div>
+<div id="list"><div id="empty">waiting for events…</div></div>
+<script>
+const $=s=>document.querySelector(s);
+const list=$('#list'); let showLocal=false, muted=false, lastSeq=0, es=null, rows=new Map();
+const fmt=n=>n>=1e6?(n/1e6).toFixed(2)+'M':n>=1000?(n/1000).toFixed(n>=100000?0:1)+'K':String(n);
+function ctl(patch){return fetch('/ctl',{method:'POST',body:JSON.stringify(patch)}).then(r=>r.json()).then(applyCtl).catch(()=>{});}
+function applyCtl(c){muted=!!c.muted;showLocal=!!c.show_local;$('#bMute').classList.toggle('on',muted);$('#muteImg').src=muted?'/asset/siren_off.png':'/asset/siren_on.png';$('#bLocal').classList.toggle('on',showLocal);
+  for(const [seq,el] of rows){el.style.display=(el.classList.contains('local')&&!showLocal)?'none':'';}}
+$('#bMute').onclick=()=>ctl({muted:!muted});
+$('#bLocal').onclick=()=>ctl({show_local:!showLocal});
+$('#bHide').onclick=()=>{ctl({visible:false}); try{window.webkit.messageHandlers.ctl.postMessage('hide')}catch(e){}};
+function render(e){
+  if(rows.has(e.seq))return; const el=document.createElement('div');
+  el.className='row lv-'+e.level+(e.backend==='local'?' local':'')+' new-in';
+  if(e.backend==='local'&&!showLocal)el.style.display='none';
+  const lvl=e.new>=STATS.cfg_red?'r':e.new>=STATS.cfg_yellow?'y':'';
+  const sess=`${e.project||''}${e.agent?'<span class="ag"> ⤷agent</span>':''} <span class="sid">${e.session||''}</span>`;
+  el.innerHTML=`<span class="ts">${e.ts_kst||''}</span><span class="sess" title="${e.sid||''}">${sess}</span><span class="m">${e.m||''}</span>`+
+    `<span class="k ${e.kind}">${e.kind}</span><span class="new ${lvl}">${e.new?'+'+fmt(e.new):''}</span><span class="rd">${e.read?fmt(e.read):''}</span>`+
+    `<span class="req">${e.note?'<span class="note">'+esc(e.note)+'</span>':''}${esc(e.req||'')}</span>`;
+  el.onclick=()=>{const d=el.querySelector('.det'); if(d){d.remove();return;} const x=document.createElement('div');x.className='det';
+    let qtxt='';
+    if(e.backend==='anthropic'&&STATS.rate&&e.new){qtxt=` · ≈${(e.new/1e6*STATS.rate).toFixed(2)}% of 5h (estimate)`;}
+    else if(e.backend==='local'){qtxt=' · local (not billed)';}
+    x.textContent=`sid ${e.sid||''} cwd ${e.cwd||''} model ${e.model||''} input ${e.input||0} cache_write ${e.cc||0} cache_read ${e.read||0} out ${e.out||0} ctx ${e.ctx||0} prev_ctx ${e.prev_ctx||0} gap ${e.gap_s??'-'}s${qtxt}`;el.appendChild(x);};
+  rows.set(e.seq,el); $('#empty')?.remove();
+  list.insertBefore(el,list.firstChild);
+  while(list.children.length>150){const last=list.lastChild; rows.delete(+last.dataset.seq); last.remove();}
+  el.dataset.seq=e.seq; lastSeq=Math.max(lastSeq,e.seq);
+  if(e.level==='red'&&e.backend!=='local'){document.body.classList.remove('alarm');void document.body.offsetWidth;document.body.classList.add('alarm');}
+}
+function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+function hue(str){let h=0;for(let i=0;i<str.length;i++)h=(h*31+str.charCodeAt(i))%360;return h;}
+function segColor(p){return `hsl(${hue(p)},58%,52%)`;}
+function renderBudget(b){
+  const used=b&&b.used_pct; $('#bUsed').textContent=used==null?'–':Math.round(used)+'%';
+  const bar=$('#bar'), leg=$('#bLeg'); bar.innerHTML=''; leg.innerHTML='';
+  if(!b||used==null){bar.innerHTML='<div class="head"></div>';return;}
+  const segs=(b.segments||[]).filter(s=>s.pct>=0.1);
+  for(const s of segs){
+    const d=document.createElement('div');d.className='seg';d.style.width=s.pct+'%';d.style.background=segColor(s.project);
+    d.title=`${s.project} — ${s.pct}% of 5h (estimate)`;bar.appendChild(d);
+  }
+  const head=document.createElement('div');head.className='head';head.title=`headroom left ${b.headroom_pct}%`;bar.appendChild(head);
+  segs.slice(0,4).forEach(s=>{const sp=document.createElement('span');sp.innerHTML=`<i style="background:${segColor(s.project)}"></i>${esc(s.project)} ${s.pct}%`;leg.appendChild(sp);});
+}
+let STATS={cfg_red:100000,cfg_yellow:20000,rate:null};
+function stats(s){STATS.cfg_red=s.cfg.red_new_tokens;STATS.cfg_yellow=s.cfg.yellow_new_tokens;
+  const q=s.quota||{}; STATS.rate=q.pct_per_mtok||null;
+  const v=q.five_h; const el=$('#q5'); let rs='';
+  if(q.five_h_resets){const d=new Date(q.five_h_resets*1000);rs=' ↻'+d.toTimeString().slice(0,5);}
+  el.innerHTML=`5h <b>${v==null?'–':Math.round(v)+'%'}</b>${rs}`; el.className='q'+(v>=85?' bad':v>=60?' warn':'');
+  const w=q.seven_d; const e7=$('#q7'); let wr='';
+  if(q.seven_d_resets){const rem=q.seven_d_resets*1000-Date.now(); if(rem>0){const h=Math.floor(rem/3600000); wr=' <span style="color:var(--dim)">'+Math.floor(h/24)+'d'+(h%24)+'h</span>';}}
+  e7.innerHTML=`7d <b>${w==null?'–':Math.round(w)+'%'}</b>${wr}`; e7.className='q'+(w>=85?' bad':w>=60?' warn':'');
+  const rlabel=STATS.rate?` · ${STATS.rate}%/Mtok`:'';
+  $('#rate').innerHTML=`60s <b>${fmt(s.new_60s||0)}</b><span style="color:var(--dim)">${rlabel}</span>`;
+  renderBudget(q.budget);
+  $('#sess').innerHTML=`<b>${s.sessions_30m||0}</b> sess`;
+  const sp=$('#spark'); sp.innerHTML=''; const mx=Math.max(1,...s.per_min);
+  s.per_min.forEach(v=>{const i=document.createElement('i');i.style.height=Math.max(1,Math.round(15*v/mx))+'px';i.title=fmt(v);if(v>=STATS.cfg_red*3)i.className='r';else if(v>=STATS.cfg_red)i.className='y';sp.appendChild(i);});
+  if(s.ctl)applyCtl(s.ctl);
+}
+async function boot(){
+  try{const r=await fetch('/events?limit=120&local=1');const j=await r.json(); j.events.forEach(render);}catch(e){}
+  try{stats(await (await fetch('/stats')).json());}catch(e){}
+  connect();
+}
+function connect(){
+  if(es)es.close(); es=new EventSource('/stream?since='+lastSeq);
+  es.addEventListener('ev',m=>render(JSON.parse(m.data)));
+  es.addEventListener('stats',m=>stats(JSON.parse(m.data)));
+  es.onerror=()=>{es.close();setTimeout(connect,2000);};
+}
+boot();
+</script></body></html>

@@ -1,0 +1,15 @@
+[Unit]
+Description=cache-siren — per-request cache and new-token watch for Anthropic requests
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+WorkingDirectory=%h/.local/lib/cache-siren
+ExecStart=/usr/bin/python3 %h/.local/lib/cache-siren/src/cache_siren.py --quiet
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

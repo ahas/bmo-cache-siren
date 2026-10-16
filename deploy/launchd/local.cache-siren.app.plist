@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>local.cache-siren.app</string>
+  <key>ProgramArguments</key><array>
+    <string>@INSTALL_ROOT@/dist/CacheSiren.app/Contents/MacOS/CacheSiren</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>5</integer>
+  <key>StandardOutPath</key><string>@HOME@/.claude/cache-siren/overlay.out.log</string>
+  <key>StandardErrorPath</key><string>@HOME@/.claude/cache-siren/overlay.err.log</string>
+  <key>LimitLoadToSessionType</key><string>Aqua</string>
+</dict></plist>
