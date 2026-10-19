@@ -487,6 +487,13 @@ impl Engine {
     seq
   }
 
+  /// Hand one alert to the hook with the overlay's muted state; that state.
+  pub fn alert(&self, alert: &Alert) -> bool {
+    let muted = self.state().ctl.muted;
+    self.hook.alert(alert, muted);
+    muted
+  }
+
   fn append(&self, row: &Row) -> io::Result<()> {
     let _held = self.events_file.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let mut file = OpenOptions::new().create(true).append(true).open(self.data.events())?;

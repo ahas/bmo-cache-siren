@@ -19,6 +19,7 @@ pub mod paths;
 pub mod posted;
 pub mod projects;
 pub mod quota;
+pub mod server;
 pub mod session;
 pub mod transcript;
 
@@ -32,5 +33,6 @@ pub use event::{Event, Level};
 pub use log::{Log, LogLevel};
 pub use models::{Backend, MODEL_NAMES, RATES, Rates, model_name, rate_for};
 pub use quota::{QuotaReading, quota_from};
+pub use server::{App, router};
 pub use session::Session;
 pub use transcript::Origin;
