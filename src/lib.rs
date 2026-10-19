@@ -7,6 +7,7 @@
 
 pub mod attribution;
 pub mod burst;
+pub mod cli;
 pub mod clock;
 pub mod clocks;
 pub mod config;

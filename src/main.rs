@@ -1,8 +1,11 @@
-//! The `cache-siren` binary: `serve` runs the daemon (docs/configuration.md, Command line).
+//! The `cache-siren` binary: `serve` runs the daemon (docs/configuration.md, Command line); every other
+//! verb asks the running daemon, on the port `CACHE_SIREN_PORT` names or 9022.
 
 use std::path::{Path, PathBuf};
+use std::process::ExitCode;
 use std::sync::Arc;
 
+use cache_siren::cli::{self, Cli as Daemon};
 use cache_siren::clocks;
 use cache_siren::paths::default_data_dir;
 use cache_siren::siren::{Settings, Siren, ensure_siren_wav};
@@ -16,14 +19,47 @@ use serde_json::json;
   about = "Live watch of prompt-cache hits and new tokens per request"
 )]
 struct Cli {
+  /// What to do; `status` when none is given.
   #[command(subcommand)]
-  command: Verb,
+  command: Option<Verb>,
 }
 
 #[derive(Subcommand)]
 enum Verb {
   /// Run the daemon: tail the transcripts, serve the page and the API, sound the siren.
   Serve(Serve),
+  /// Whether the daemon is up, with its files, events, newest row and 5-hour quota.
+  Status,
+  /// Show the overlay.
+  Show,
+  /// Hide the overlay.
+  Hide,
+  /// Show the overlay if hidden, else hide it.
+  Toggle,
+  /// Silence the siren and the voice; alerts are still logged.
+  Mute,
+  /// Let the siren and the voice sound again.
+  Unmute,
+  /// Show local-backend rows (`on`) or leave them out (anything else).
+  Local { state: Option<String> },
+  /// Switch the overlay to the frozen demo page.
+  Demo,
+  /// Switch the overlay back to the live page.
+  Live,
+  /// Sound the siren and the voice once.
+  Test,
+  /// The newest rows, local ones included.
+  Tail {
+    #[arg(default_value = "20")]
+    rows: String,
+  },
+  /// Restart the daemon under the host's service manager.
+  Restart,
+  /// The last lines of the daemon's log.
+  Log {
+    #[arg(default_value_t = 30)]
+    lines: usize,
+  },
 }
 
 #[derive(Args)]
@@ -45,10 +81,31 @@ struct Serve {
   no_backfill: bool,
 }
 
-fn main() {
-  let cli = Cli::parse();
-  match cli.command {
-    Verb::Serve(serve) => run(serve),
+fn main() -> ExitCode {
+  let verb = Cli::parse().command.unwrap_or(Verb::Status);
+  let port = std::env::var("CACHE_SIREN_PORT")
+    .ok()
+    .and_then(|port| port.parse().ok())
+    .unwrap_or(9022);
+  let daemon = Daemon::new(port);
+  match verb {
+    Verb::Serve(serve) => {
+      run(serve);
+      ExitCode::SUCCESS
+    }
+    Verb::Status => daemon.status(),
+    Verb::Show => daemon.show(true),
+    Verb::Hide => daemon.show(false),
+    Verb::Toggle => daemon.toggle(),
+    Verb::Mute => daemon.mute(true),
+    Verb::Unmute => daemon.mute(false),
+    Verb::Local { state } => daemon.local(state.as_deref() == Some("on")),
+    Verb::Demo => daemon.demo(),
+    Verb::Live => daemon.live(),
+    Verb::Test => daemon.test(),
+    Verb::Tail { rows } => daemon.tail(&rows),
+    Verb::Restart => cli::restart(),
+    Verb::Log { lines } => cli::log_tail(&DataDir::new(default_data_dir()).log(), lines),
   }
 }
 
