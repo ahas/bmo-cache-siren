@@ -1,6 +1,7 @@
 # Build output and local-only files
 dist/
 .build/
+target/
 __pycache__/
 *.pyc
 # Holds local paths, the voice command and the port; each host makes its own (created with defaults on first run).

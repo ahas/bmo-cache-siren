@@ -1,0 +1,27 @@
+# The siren is one package: the library holds the daemon's parts and the binary runs them. Every test
+# lives in `tests/`. Versions follow the ones the bmo-next services already build with, so one cargo
+# cache serves them all; nothing here reaches another repository.
+[package]
+name = "bmo-cache-siren"
+description = "Live watch of prompt-cache hits and new tokens per request, with a siren on sudden re-prefills"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+name = "cache_siren"
+path = "src/lib.rs"
+
+[dependencies]
+axum = "0.8.9"
+chrono = "0.4.45"
+clap = { version = "4.6.7", features = ["derive"] }
+futures-util = "0.3.34"
+glob = "0.3.4"
+hound = "3.5.1"
+indexmap = { version = "2.14.2", features = ["serde"] }
+reqwest = { version = "0.13.5", features = ["json"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = { version = "1.0.154", features = ["preserve_order"] }
+tempfile = "3.27.0"
+tokio = { version = "1.53.3", features = ["macros", "rt-multi-thread", "net", "time", "signal", "process", "sync", "fs", "io-util"] }

@@ -11,7 +11,7 @@ import unittest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(ROOT, "src")
 # Folders holding version control, caches and build output, not files of the repository.
-UNGUARDED_DIRS = {".git", "__pycache__", "dist", ".build"}
+UNGUARDED_DIRS = {".git", "__pycache__", "dist", ".build", "target"}
 # Hangul Jamo, Compatibility Jamo, Jamo Extended-A, Syllables and Jamo Extended-B, built from code
 # points so this file holds none of the characters it looks for.
 HANGUL_RANGES = ((0x1100, 0x11FF), (0x3130, 0x318F), (0xA960, 0xA97F), (0xAC00, 0xD7AF), (0xD7B0, 0xD7FF))
