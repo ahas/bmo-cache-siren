@@ -12,17 +12,18 @@ before anyone notices. The siren makes that visible as it happens.
 
 ## Install and run
 
-The core is one Python file on the standard library alone, and runs on any OS.
+The core is one Rust binary, built with Cargo, and runs on any OS.
 
 ```
-python3 src/cache_siren.py &
+cargo build --release
+target/release/cache-siren serve &
 xdg-open http://127.0.0.1:9022/      # macOS: open
-bin/cache-siren status
+target/release/cache-siren status
 ```
 
 The daemon listens on `127.0.0.1:9022`. On first run it writes `config.json` with every default;
-`docs/configuration.md` lists each key. The browser page is the live table; the CLI in `bin/` talks
-to the same daemon.
+`docs/configuration.md` lists each key and each flag of `serve`. The browser page is the live table;
+every other verb of the same binary talks to the running daemon.
 
 Per platform:
 
@@ -68,16 +69,18 @@ every other route and the event rows.
 ## Usage
 
 ```
-bin/cache-siren                  # status
-bin/cache-siren tail 30          # the last 30 rows
-bin/cache-siren show|hide|toggle # the overlay
-bin/cache-siren mute|unmute
-bin/cache-siren local on|off     # rows from runners that post their own usage
-bin/cache-siren demo|live        # a frozen demo screen, or back to live
-bin/cache-siren test             # sound the siren once
-bin/cache-siren restart          # launchd hosts
-bin/cache-siren log 50
+cache-siren                  # status
+cache-siren tail 30          # the last 30 rows
+cache-siren show|hide|toggle # the overlay
+cache-siren mute|unmute
+cache-siren local on|off     # rows from runners that post their own usage
+cache-siren demo|live        # a frozen demo screen, or back to live
+cache-siren test             # sound the siren once
+cache-siren restart          # launchd on macOS, systemd --user elsewhere
+cache-siren log 50
 ```
+
+The verbs ask the daemon on port 9022, or on the port `CACHE_SIREN_PORT` names.
 
 The overlay is dragged from anywhere, resized from the bottom-right corner, and a click on a row opens
 its detail; the header's `—` hides it.
@@ -127,6 +130,17 @@ Leave `CLAUDE_CODE_MAX_WEB_SEARCHES_PER_SESSION` at its default. A lean research
 tools are limited to search cuts its first prefill to about a quarter, but in deep research that
 saves only about 5% overall.
 
+## Folders
+
+| Folder | Holds |
+| --- | --- |
+| `src` | the `cache_siren` library and the `cache-siren` binary |
+| `tests` | every test, with the in-process server the route tests start |
+| `web` | the live page and the demo page the daemon serves |
+| `macos` | the Swift overlay app and its build script |
+| `deploy` | the systemd user unit and the launchd files |
+| `docs` | the boundary API, the configuration and the porting guide |
+
 ## Documents
 
 - `docs/api.md`: every HTTP route, the event rows and the contracts other services hold the daemon to.
@@ -137,4 +151,5 @@ saves only about 5% overall.
 ## Credits
 
 This project is derived from cache-siren, which designed and built the daemon, the overlay,
-the classification and the fan-out measurements described here. See `NOTICE`.
+the classification and the fan-out measurements described here. The Rust daemon carries that design
+forward. See `NOTICE`.

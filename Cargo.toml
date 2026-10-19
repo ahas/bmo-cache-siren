@@ -4,7 +4,7 @@
 [package]
 name = "bmo-cache-siren"
 description = "Live watch of prompt-cache hits and new tokens per request, with a siren on sudden re-prefills"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 publish = false
 
@@ -30,3 +30,6 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.154", features = ["preserve_order"] }
 tempfile = "3.27.0"
 tokio = { version = "1.53.3", features = ["macros", "rt-multi-thread", "net", "time", "signal", "process", "sync", "fs", "io-util"] }
+
+[dev-dependencies]
+toml = { version = "0.8.23", default-features = false, features = ["parse"] }

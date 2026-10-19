@@ -4,23 +4,24 @@ What runs anywhere, what is macOS only, what depends on outside services, and th
 run on Linux. It is written so that a person or an agent setting the siren up on a new host can
 follow it step by step.
 
-In one line: the daemon and its browser page run on any OS with Python 3.11 or later; the overlay
+In one line: the daemon and its browser page run on any OS a Rust toolchain builds for; the overlay
 app, the siren sound and autostart are per platform; the quota header and the heartbeat need
 services of your own and are optional.
 
 ## The OS-independent core
 
-- **The daemon** (`src/cache_siren.py`): standard library only. It tails transcripts under
-  `projects_globs`, takes posted usage on `POST /events`, classifies each request and serves the
-  page, the API and the event stream on `127.0.0.1:<port>`.
-- **What it writes:** everything under `~/.claude/cache-siren/`: the log, the event log, the tail
-  offsets, the overlay control file and the generated siren sound. `docs/api.md` lists each file.
+- **The daemon** (`cache-siren serve`, built from `src/`): one binary of registry crates. It tails
+  transcripts under `projects_globs`, takes posted usage on `POST /events`, classifies each request
+  and serves the page, the API and the event stream on `127.0.0.1:<port>`.
+- **What it writes:** everything under `~/.claude/cache-siren/`, or the directory `--data-dir` names:
+  the log, the event log, the tail offsets, the overlay control file and the generated siren sound.
+  `docs/api.md` lists each file.
 - **The page** (`web/`): the live table, served by the daemon at `/`, with a frozen demo at `/demo`.
   Any browser shows it.
 - **The table survives a restart:** at start the daemon restores the last `ring` rows from the event
   log, and the rolling five-hour window from the last five hours of it.
-- **The CLI** (`bin/cache-siren`): bash, curl and the formatter in `src/cli_fmt.py`. Every command
-  but `restart` works on any OS.
+- **The CLI** (the same binary's other verbs): every verb works on any OS; `restart` asks launchd on
+  macOS and systemd --user elsewhere.
 
 ## macOS only, and the Linux replacement
 
@@ -29,7 +30,7 @@ services of your own and are optional.
 | The overlay app (`macos/`, Swift, an always-on-top panel showing the page) | an always-on-top browser window, such as `chromium --app=http://127.0.0.1:9022`, or a thin wrapper of your own |
 | `afplay` for the siren | `paplay`, `aplay` or `ffplay -nodisp -autoexit`, which needs a change where the daemon plays the sound |
 | launchd (`deploy/launchd/`) | systemd --user (`deploy/systemd/cache-siren.service`) |
-| `bin/cache-siren restart` (launchctl) | `systemctl --user restart cache-siren` |
+| `cache-siren restart` runs `launchctl kickstart` | `cache-siren restart` runs `systemctl --user restart cache-siren` |
 | `voice_cmd` | leave it empty or point it at your own text-to-speech command |
 
 Only the macOS side has been verified by the original author. The Linux replacements are yours to
@@ -37,15 +38,17 @@ check; the core needs no change.
 
 The launchd files carry two placeholders, replaced when they are installed:
 
-- `@INSTALL_ROOT@`: the folder the repository is installed to, holding `src/` and `dist/`.
+- `@INSTALL_ROOT@`: the folder the siren is installed to, holding `bin/cache-siren`, `web/` and
+  `dist/`.
 - `@HOME@`: the user's home folder, where the logs go.
 
 Their labels are `local.cache-siren` (the daemon) and `local.cache-siren.app` (the overlay), and the
 overlay's bundle identifier is `local.cache-siren`. launchctl addresses them in the user's GUI
 domain, `gui/$(id -u)/<label>`, so no user id is written into any file.
 
-The systemd unit reaches its install root through `%h`, the user's home, so it holds no user name
-either.
+The systemd unit reaches its deploy tree through `%h`, the user's home, so it holds no user name
+either. It runs the deployed release's `bin/cache-siren serve` with the config file kept in the
+deployment's data root (`testbed.toml`).
 
 ## Outside services
 
@@ -74,9 +77,10 @@ daemon still writes an alive line to its log every ten minutes, which a log-stal
 ## The least needed on Linux
 
 ```
-python3 src/cache_siren.py &
+cargo build --release
+target/release/cache-siren serve &
 xdg-open http://127.0.0.1:9022/
-bin/cache-siren tail 20
+target/release/cache-siren tail 20
 ```
 
 `config.json` is created with the defaults on first run. Set `projects_globs` if transcripts live

@@ -6,7 +6,7 @@ one realisation of it.
 
 ## Versioning
 
-The version is the one in `pyproject.toml` (semver). Any change to a contract stated here — a route,
+The version is the one in `Cargo.toml` (semver). Any change to a contract stated here — a route,
 a query parameter, a body or response field, its type or meaning, an error code, an SSE event name —
 is a major version bump, and this document changes with it in the same commit.
 

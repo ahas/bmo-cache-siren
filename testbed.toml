@@ -1,0 +1,45 @@
+# How the testbed tests, checks, builds and deploys this repository, in the testbed's declaration format.
+testbed = 0
+name = "bmo-cache-siren"
+
+# Every test is a test of the one Cargo package, under tests/.
+[test]
+languages = ["cargo"]
+
+[check]
+quick = ["korean", "layout", "dependencies"]
+# No file of the checkout holds Korean, so the ledger allows none anywhere.
+korean_ledger = "korean-ledger.json"
+# The siren builds on no other repository's library: every crate it names comes from the registry.
+base_libraries = []
+
+[[check.step]]
+id = "check"
+command = "cargo check --all-targets"
+lane = "wide"
+
+[[check.step]]
+id = "clippy"
+command = "cargo clippy --all-targets -- -D warnings"
+lane = "wide"
+
+[[check.step]]
+id = "fmt"
+command = "cargo fmt --check"
+
+[build]
+binaries = ["cache-siren"]
+
+# The daemon runs from its own deploy tree: a release is a worktree of the commit, so the pages in web/
+# stand beside bin/cache-siren, which finds them there. Its config file lives in the data root and is
+# kept across releases; `POST /ttl` writes back into it. The unit is restarted by every deployment, so a
+# release's pages and binary go live together.
+[deploy]
+root = "~/.local/share/bmo-cache-siren"
+data_root = "~/.local/share/bmo-cache-siren/data"
+units = ["deploy/systemd/*.service"]
+
+[[deploy.step]]
+id = "data-root"
+phase = "before-flip"
+command = "mkdir -p \"$HOME/.local/share/bmo-cache-siren/data\""

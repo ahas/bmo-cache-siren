@@ -3,8 +3,8 @@
 <plist version="1.0"><dict>
   <key>Label</key><string>local.cache-siren</string>
   <key>ProgramArguments</key><array>
-    <string>/usr/bin/python3</string>
-    <string>@INSTALL_ROOT@/src/cache_siren.py</string>
+    <string>@INSTALL_ROOT@/bin/cache-siren</string>
+    <string>serve</string>
     <string>--quiet</string>
   </array>
   <key>RunAtLoad</key><true/>
@@ -12,5 +12,5 @@
   <key>ThrottleInterval</key><integer>5</integer>
   <key>StandardOutPath</key><string>@HOME@/.claude/cache-siren/daemon.out.log</string>
   <key>StandardErrorPath</key><string>@HOME@/.claude/cache-siren/daemon.err.log</string>
-  <key>EnvironmentVariables</key><dict><key>PYTHONUNBUFFERED</key><string>1</string><key>PATH</key><string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string></dict>
+  <key>EnvironmentVariables</key><dict><key>PATH</key><string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string></dict>
 </dict></plist>

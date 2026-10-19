@@ -6,10 +6,14 @@ StartLimitIntervalSec=300
 StartLimitBurst=5
 
 [Service]
-WorkingDirectory=%h/.local/lib/cache-siren
-ExecStart=/usr/bin/python3 %h/.local/lib/cache-siren/src/cache_siren.py --config %h/.local/lib/cache-siren/config.json --quiet
+# The deployed tree: bin/ holds the daemon, web/ the pages it serves. The config file stands in the data
+# root, kept across releases; the siren's own data directory is its default, ~/.claude/cache-siren.
+WorkingDirectory=%h/.local/share/bmo-cache-siren/deploy
+ExecStart=%h/.local/share/bmo-cache-siren/deploy/bin/cache-siren serve --config %h/.local/share/bmo-cache-siren/data/config.json --quiet
 Restart=always
 RestartSec=5
 
 [Install]
 WantedBy=default.target
+# Linked, enabled and restarted by every deployment, so the release's pages go live with its binary.
+X-BMO-Deploy=restart
