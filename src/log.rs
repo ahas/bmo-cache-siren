@@ -19,24 +19,24 @@ const KEEP_BYTES: i64 = 4_000_000;
 const TRIMMED_MARK: &[u8] = b"[log truncated to last ~4MB]\n";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Level {
+pub enum LogLevel {
   Info,
   Warn,
   Error,
 }
 
-impl Level {
+impl LogLevel {
   pub fn as_str(self) -> &'static str {
     match self {
-      Level::Info => "INFO",
-      Level::Warn => "WARN",
-      Level::Error => "ERROR",
+      LogLevel::Info => "INFO",
+      LogLevel::Warn => "WARN",
+      LogLevel::Error => "ERROR",
     }
   }
 }
 
 /// One line of the log, without its newline. An empty object or a null adds no fields.
-pub fn format_line(at: DateTime<Local>, level: Level, message: &str, fields: &Value) -> String {
+pub fn format_line(at: DateTime<Local>, level: LogLevel, message: &str, fields: &Value) -> String {
   let mut line =
     format!("[{}] [cache-siren] [{}] {message}", at.format("%Y-%m-%dT%H:%M:%S"), level.as_str());
   let empty = match fields {
@@ -72,7 +72,7 @@ impl Log {
     &self.file
   }
 
-  pub fn line(&self, level: Level, message: &str, fields: Value) {
+  pub fn line(&self, level: LogLevel, message: &str, fields: Value) {
     let line = format_line(now_local(), level, message, &fields);
     {
       let _held = self.lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -89,15 +89,15 @@ impl Log {
   }
 
   pub fn info(&self, message: &str, fields: Value) {
-    self.line(Level::Info, message, fields);
+    self.line(LogLevel::Info, message, fields);
   }
 
   pub fn warn(&self, message: &str, fields: Value) {
-    self.line(Level::Warn, message, fields);
+    self.line(LogLevel::Warn, message, fields);
   }
 
   pub fn error(&self, message: &str, fields: Value) {
-    self.line(Level::Error, message, fields);
+    self.line(LogLevel::Error, message, fields);
   }
 }
 
