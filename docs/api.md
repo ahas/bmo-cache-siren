@@ -283,7 +283,8 @@ On a red alert, unless muted and outside the per-session cooldown:
 
 ## Data directory
 
-`~/.claude/cache-siren` holds the durable event log `events.jsonl` (pruned to `retention_days`),
+`~/.claude/cache-siren`, or the directory `--data-dir` names (`docs/configuration.md`), holds the
+durable event log `events.jsonl` (pruned to `retention_days`),
 `state.json` (transcript offsets), `ctl.json` (overlay state), `cache-siren.log` (structured lines,
 cut to its last 4 MB past 8 MB), the generated `siren.wav` and the optional overlay images. Only the
 siren writes it.

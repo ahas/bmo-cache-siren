@@ -1,9 +1,26 @@
 # Configuration
 
-One JSON file, given with `--config` (default: `config.json` at the root the daemon runs from, which
-git ignores). When the file is missing the daemon writes it with every default and runs on them. A
-file that cannot be read leaves the defaults in force and logs the failure. Keys the file leaves out
-keep their defaults; keys it adds are carried but unused.
+One JSON file, given with `--config` (default: `config.json` in the install root, which git ignores).
+When the file is missing the daemon writes it with every default and runs on them. A file that cannot
+be read, or gives a key a value of the wrong type, leaves the defaults in force and logs the failure.
+Keys the file leaves out keep their defaults; keys it adds are carried but unused.
+
+## Command line
+
+`cache-siren serve` runs the daemon. Its flags:
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--config <file>` | `config.json` in the install root | the config file below |
+| `--data-dir <dir>` | `~/.claude/cache-siren` | the data directory the siren writes (`docs/api.md`, Data directory) |
+| `--web-dir <dir>` | `web/` in the install root | the pages the daemon serves |
+| `--quiet` | off | log lines go only to the log file, not to standard output |
+| `--no-backfill` | off | skip the start-up load of recent requests; unread transcripts are taken from their end |
+
+The install root is the nearest folder above the binary that holds `web/index.html`, so an installed
+tree and a build inside the checkout both find their pages; the current directory where none does.
+
+## Keys
 
 The file is read once, at start. The two TTL keys can also change while running, through
 `POST /ttl` (see `docs/api.md`), which applies them at once and merges them back into the same file.
@@ -31,7 +48,7 @@ Every other key changes only by editing the file and restarting.
 | `voice` | false | start | speak red alerts |
 | `voice_cmd` | `[]` | start | argument list run to speak, with `{text}` replaced by the alert text; nothing is spoken while empty |
 | `sound` | true | start | play the siren on red alerts |
-| `siren_file` | `~/.claude/cache-siren/warning.mp3`, expanded | start | sound played when the path exists, else the generated `siren.wav`; the path is used as written, so a `~` in the file is not expanded |
+| `siren_file` | `warning.mp3` in the data directory, as an absolute path | start | sound played when the path exists, else the generated `siren.wav`; the path is used as written, so a `~` in the file is not expanded |
 | `quota_url` | `http://localhost:9200/api/claude` | start | quota source polled every 30 seconds; empty asks nothing |
 | `heartbeat_url` | empty | start | where the heartbeat is posted every 45 seconds; empty sends nothing |
 | `node` | empty | start | node name in the heartbeat; empty means the host name |
