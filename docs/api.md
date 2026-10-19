@@ -18,9 +18,9 @@ Each contract names today's counterpart by role, not by its code.
 | --- | --- | --- |
 | Collection caller | bmo-job | `POST /events`, one call per request of a runner that leaves no transcript, with the twelve `Event` fields below |
 | Console reader | bmo-web | `GET /stats` and `GET /events?limit=N`, read-only |
-| TTL publisher | bmo-agency | Today it rewrites `ttl_s` and `ttl_by_mode_model_s` in the siren's config file and restarts the service; from the switch-over it calls `POST /ttl` instead |
+| TTL writer | no service; an operator or a deployment script | `POST /ttl`, or editing `ttl_s` and `ttl_by_mode_model_s` in the config file and restarting the service |
 | Quota source | the agent-supply service on its quota port | answers the GET the siren polls at `quota_url` |
-| Service registry | whatever answers `heartbeat_url` | receives the heartbeat POST |
+| Service registry | no service; `heartbeat_url` is empty by default | receives the heartbeat POST when a host sets `heartbeat_url` |
 | Overlay | the macOS overlay app in `macos/` and any browser | `GET /`, `/demo`, `/asset/*`, `/stream`, `/ctl` |
 
 ## Served routes
@@ -136,7 +136,8 @@ A burst row (`kind` `burst`, `level` `red`) is added when the new tokens of the 
 `burst_red_tokens`. It carries `seq`, `ts_kst`, `date_kst`, `epoch`, `kind`, `level`, `project` (the
 largest owners, comma-joined), `session` and `m` (empty), `new`, `read`, `note`, `parts` (each
 `{project, new, read, req}`, largest first), `req` (empty), `backend` (`anthropic`) and `cost` (0),
-and none of the other fields.
+and none of the other fields. Its `note` reads `<N> req in <W>s`: the N requests within the
+W-second burst window.
 
 The console reader reads `seq`, `ts_kst`, `epoch`, `project`, `session`, `sid`, `cwd`, `agent`,
 `gap_s`, `mode`, `m`, `model`, `kind`, `level`, `note`, `new` and `read`.

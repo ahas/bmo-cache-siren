@@ -33,7 +33,7 @@ Every other key changes only by editing the file and restarting.
 | `sound` | true | start | play the siren on red alerts |
 | `siren_file` | `~/.claude/cache-siren/warning.mp3`, expanded | start | sound played when the path exists, else the generated `siren.wav`; the path is used as written, so a `~` in the file is not expanded |
 | `quota_url` | `http://localhost:9200/api/claude` | start | quota source polled every 30 seconds; empty asks nothing |
-| `heartbeat_url` | `http://localhost:9200/api/services/heartbeat` | start | where the heartbeat is posted every 45 seconds; empty sends nothing |
+| `heartbeat_url` | empty | start | where the heartbeat is posted every 45 seconds; empty sends nothing |
 | `node` | empty | start | node name in the heartbeat; empty means the host name |
 | `ring` | 600 | start | rows held in memory and restored from the event log at start |
 | `retention_days` | 7 | start | event-log rows older than this are pruned; 0 keeps everything |
@@ -46,5 +46,6 @@ Every other key changes only by editing the file and restarting.
   roots here; nothing else is scanned.
 - Project names come out as the whole encoded folder name, less its leading dashes, unless
   `project_prefixes` names the leading part to cut, such as the encoded home directory.
-- The TTL publisher may keep writing the two TTL keys into this file and restarting the service; the
-  start-up read picks them up. `POST /ttl` reaches the same state without a restart.
+- No service writes the two TTL keys; an operator or a deployment script sets them, either by editing
+  this file and restarting the service, which the start-up read picks up, or through `POST /ttl`,
+  which reaches the same state without a restart.

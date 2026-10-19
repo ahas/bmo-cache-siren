@@ -120,7 +120,7 @@ DEFAULT_CONFIG = {
     "sound": True,
     "siren_file": os.path.join(RUN_DIR, "warning.mp3"),   # played when present, else the generated siren.wav (afplay plays mp3 natively)
     "quota_url": "http://localhost:9200/api/claude",
-    "heartbeat_url": "http://localhost:9200/api/services/heartbeat",
+    "heartbeat_url": "",
     "ring": 600,
     "retention_days": 7,          # lines of events.jsonl older than this are removed every 6h (0 = keep forever)
     "prune_every_s": 6 * 3600,
