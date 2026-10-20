@@ -1,0 +1,34 @@
+[
+  {
+    "id": "surface/overlay",
+    "title": "macOS overlay",
+    "what": "The always-on-top Swift panel that hosts the live page on macOS, built into an app by its build script (macos/main.swift, macos/build.sh).",
+    "files": [
+      "macos/main.swift",
+      "macos/build.sh"
+    ],
+    "symbols": [],
+    "aliases": [],
+    "needs": [
+      "surface/pages"
+    ],
+    "base": "c8f952552cfbea6f25e4bac06a61212e637b54b7",
+    "changed": 1792498856322
+  },
+  {
+    "id": "surface/pages",
+    "title": "Live and demo pages",
+    "what": "The browser pages the daemon serves: the live table that follows the event stream and shows the sessions of the window, and the demo page of fixed sample rows (web/index.html, web/demo.html).",
+    "files": [
+      "web/index.html",
+      "web/demo.html"
+    ],
+    "symbols": [],
+    "aliases": [],
+    "needs": [
+      "service/http"
+    ],
+    "base": "c8f952552cfbea6f25e4bac06a61212e637b54b7",
+    "changed": 1792498856320
+  }
+]

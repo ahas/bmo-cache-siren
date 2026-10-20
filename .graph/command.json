@@ -1,0 +1,41 @@
+[
+  {
+    "id": "command/cli",
+    "title": "bmo-cache-siren command",
+    "what": "The binary's verbs: serve runs the daemon, mcp and openapi its own server and contract, and every other verb asks the running daemon through the client (src/main.rs, src/cli.rs).",
+    "files": [
+      "src/main.rs",
+      "src/cli.rs"
+    ],
+    "symbols": [
+      "status",
+      "status_line",
+      "event_line",
+      "tail_lines",
+      "stats_lines",
+      "settings_line",
+      "print",
+      "page_address",
+      "restart",
+      "log_tail"
+    ],
+    "aliases": [],
+    "needs": [
+      "alerts/siren",
+      "analysis/levels",
+      "engine/engine",
+      "mcp/server",
+      "service/client",
+      "service/clocks",
+      "service/config",
+      "service/http",
+      "service/log",
+      "service/openapi",
+      "service/storage",
+      "service/token",
+      "service/wire"
+    ],
+    "base": "c8f952552cfbea6f25e4bac06a61212e637b54b7",
+    "changed": 1792498856318
+  }
+]

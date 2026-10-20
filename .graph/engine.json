@@ -1,0 +1,56 @@
+[
+  {
+    "id": "engine/engine",
+    "title": "Siren engine",
+    "what": "Holds transcript offsets, sessions, the event window and its durable log, the burst window and live settings behind one lock, and answers pages, streams, stats and settings changes (src/engine.rs).",
+    "files": [
+      "src/engine.rs"
+    ],
+    "symbols": [
+      "Engine",
+      "Alert",
+      "AlertHook",
+      "Silent",
+      "Refusal",
+      "Filter",
+      "load_window",
+      "DEFAULT_LIMIT",
+      "MOST_LIMIT"
+    ],
+    "aliases": [],
+    "needs": [
+      "analysis/burst",
+      "analysis/classify",
+      "analysis/levels",
+      "analysis/models",
+      "engine/session",
+      "ingest/posted",
+      "ingest/transcripts",
+      "service/config",
+      "service/log",
+      "service/storage",
+      "service/time",
+      "service/wire"
+    ],
+    "base": "c8f952552cfbea6f25e4bac06a61212e637b54b7",
+    "changed": 1792498856300
+  },
+  {
+    "id": "engine/session",
+    "title": "Session memory",
+    "what": "What the siren remembers of one session between its requests: whether it was seen, its last model and context, its flags and its newest message ids (src/session.rs).",
+    "files": [
+      "src/session.rs"
+    ],
+    "symbols": [
+      "Session",
+      "MSG_IDS_KEPT"
+    ],
+    "aliases": [],
+    "needs": [
+      "analysis/classify"
+    ],
+    "base": "c8f952552cfbea6f25e4bac06a61212e637b54b7",
+    "changed": 1792498856292
+  }
+]

@@ -1,0 +1,27 @@
+[
+  {
+    "id": "mcp/server",
+    "title": "MCP server",
+    "what": "The harness plugin's MCP server on standard input and output, each tool a thin call of one route through the service's client (src/mcp.rs).",
+    "files": [
+      "src/mcp.rs"
+    ],
+    "symbols": [
+      "tools",
+      "SirenTool",
+      "SirenServer",
+      "ToolFailure",
+      "generator",
+      "PLUGIN",
+      "MCP",
+      "ENTRY"
+    ],
+    "aliases": [],
+    "needs": [
+      "service/client",
+      "service/wire"
+    ],
+    "base": "c8f952552cfbea6f25e4bac06a61212e637b54b7",
+    "changed": 1792498856311
+  }
+]

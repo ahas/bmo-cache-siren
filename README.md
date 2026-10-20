@@ -143,6 +143,7 @@ saves only about 5% overall.
 | `macos` | the Swift overlay app and its build script |
 | `deploy` | the systemd user unit and the launchd files |
 | `docs` | the API, its OpenAPI document, the configuration and the porting guide |
+| `.graph/` | the code dependency graph: one node per feature with its files and what it reads or calls, and boundary nodes for the APIs it exposes, written only by `bmo graph` |
 
 ## Documents
 
