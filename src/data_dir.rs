@@ -16,7 +16,7 @@ impl DataDir {
     &self.root
   }
 
-  /// The durable event log, one row per line.
+  /// The durable event log, one event per line.
   pub fn events(&self) -> PathBuf {
     self.root.join("events.jsonl")
   }
@@ -26,9 +26,9 @@ impl DataDir {
     self.root.join("state.json")
   }
 
-  /// The overlay control state.
-  pub fn ctl(&self) -> PathBuf {
-    self.root.join("ctl.json")
+  /// The bearer token every API route takes, unless another file is named.
+  pub fn token(&self) -> PathBuf {
+    self.root.join("token")
   }
 
   pub fn log(&self) -> PathBuf {

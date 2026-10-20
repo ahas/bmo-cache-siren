@@ -1,12 +1,24 @@
 // cache-siren overlay — always-on-top, non-activating floating panel hosting the daemon's page.
 // No Accessibility / AppleEvents needed (no TCC popups). Position/size persist via frame autosave.
-// Follows GET /ctl {visible, opacity} every 2s so `cache-siren show|hide` from any shell works.
+// The page carries the API token in its address's fragment, read from CACHE_SIREN_TOKEN or the daemon's
+// token file. The page's hide button hides the panel; `bmo-cache-siren restart` brings it back.
 import Cocoa
 import WebKit
 
-let PORT = Int(ProcessInfo.processInfo.environment["CACHE_SIREN_PORT"] ?? "9022") ?? 9022
-let BASE = "http://127.0.0.1:\(PORT)"
-let logURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/cache-siren/overlay.log")
+let ENV = ProcessInfo.processInfo.environment
+let BASE = ENV["CACHE_SIREN_ADDRESS"] ?? "http://127.0.0.1:9022"
+let DATA = ENV["CACHE_SIREN_DATA_DIR"].map { URL(fileURLWithPath: $0) }
+    ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/cache-siren")
+let logURL = DATA.appendingPathComponent("overlay.log")
+
+/// The API token: CACHE_SIREN_TOKEN, else the token file's content; read at every load, since the daemon
+/// writes the file on its first start.
+func token() -> String {
+    if let given = ENV["CACHE_SIREN_TOKEN"], !given.isEmpty { return given }
+    let file = ENV["CACHE_SIREN_TOKEN_FILE"].map { URL(fileURLWithPath: $0) } ?? DATA.appendingPathComponent("token")
+    let text = (try? String(contentsOf: file, encoding: .utf8)) ?? ""
+    return text.trimmingCharacters(in: .whitespacesAndNewlines)
+}
 
 func log(_ msg: String) {
     let ts = ISO8601DateFormatter().string(from: Date())
@@ -33,7 +45,6 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKScript
     var panel: Panel!
     var web: WKWebView!
     var visible = true
-    var page = "/"
     var retry: Timer?
 
     func applicationDidFinishLaunching(_ n: Notification) {
@@ -54,7 +65,7 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKScript
         panel.setFrameAutosaveName("CacheSirenPanel")
 
         let cfg = WKWebViewConfiguration()
-        cfg.userContentController.add(self, name: "ctl")
+        cfg.userContentController.add(self, name: "overlay")
         web = DragWebView(frame: panel.contentView!.bounds, configuration: cfg)
         web.autoresizingMask = [.width, .height]
         web.navigationDelegate = self
@@ -65,11 +76,13 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKScript
         panel.contentView?.addSubview(web)
         load()
         panel.orderFrontRegardless()
-        log("launched port=\(PORT) frame=\(panel.frame)")
-        Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in self?.pollCtl() }
+        log("launched address=\(BASE) frame=\(panel.frame)")
     }
 
-    func load() { web.load(URLRequest(url: URL(string: BASE + page)!, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 5)) }
+    func load() {
+        let address = BASE + "/#access_token=" + token()
+        web.load(URLRequest(url: URL(string: address)!, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 5))
+    }
 
     func webView(_ w: WKWebView, didFail n: WKNavigation!, withError e: Error) { scheduleRetry("didFail \(e.localizedDescription)") }
     func webView(_ w: WKWebView, didFailProvisionalNavigation n: WKNavigation!, withError e: Error) { scheduleRetry("provisional \(e.localizedDescription)") }
@@ -89,23 +102,6 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKScript
         visible = v
         if v { panel.orderFrontRegardless(); load() } else { panel.orderOut(nil) }
         log("visible -> \(v)")
-    }
-
-    func pollCtl() {
-        var req = URLRequest(url: URL(string: BASE + "/ctl")!, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 2)
-        req.httpMethod = "GET"
-        URLSession.shared.dataTask(with: req) { [weak self] data, _, _ in
-            guard let self = self, let d = data, let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { return }
-            DispatchQueue.main.async {
-                if let v = j["visible"] as? Bool { self.setVisible(v) }
-                if let o = j["opacity"] as? Double, abs(self.panel.alphaValue - o) > 0.01 { self.panel.alphaValue = o }
-                if let p = j["page"] as? String, p != self.page {   // switch between live ('/') and demo ('/demo')
-                    self.page = p
-                    log("page -> \(p)")
-                    if self.visible { self.load() }
-                }
-            }
-        }.resume()
     }
 }
 

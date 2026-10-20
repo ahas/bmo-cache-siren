@@ -1,4 +1,4 @@
-//! Host-local time: every `ts_kst` and `date_kst` the siren writes is in the host's own zone.
+//! Time: epoch seconds and milliseconds, and the host-local reading of a transcript's timestamps.
 
 use chrono::{DateTime, Local, NaiveDateTime, TimeZone};
 
@@ -15,6 +15,16 @@ pub fn now_epoch() -> f64 {
 /// A time as Unix seconds, to the microsecond.
 pub fn epoch_of<Tz: TimeZone>(at: &DateTime<Tz>) -> f64 {
   at.timestamp_micros() as f64 / 1e6
+}
+
+/// A time as epoch milliseconds.
+pub fn millis_of<Tz: TimeZone>(at: &DateTime<Tz>) -> i64 {
+  at.timestamp_millis()
+}
+
+/// Now, as epoch milliseconds.
+pub fn now_millis() -> i64 {
+  Local::now().timestamp_millis()
 }
 
 /// A transcript `timestamp` (ISO 8601, usually UTC with `Z`) in the host's zone; a timestamp with no

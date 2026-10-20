@@ -3,7 +3,7 @@
 <plist version="1.0"><dict>
   <key>Label</key><string>local.cache-siren</string>
   <key>ProgramArguments</key><array>
-    <string>@INSTALL_ROOT@/bin/cache-siren</string>
+    <string>@INSTALL_ROOT@/bin/bmo-cache-siren</string>
     <string>serve</string>
     <string>--quiet</string>
   </array>

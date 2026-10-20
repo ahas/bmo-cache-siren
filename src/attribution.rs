@@ -1,10 +1,11 @@
-//! What kind a request is, and the name of a re-prefill's cause (docs/api.md, the event row's `kind` and
+//! What kind a request is, and the name of a re-prefill's cause (docs/api.md, a Usage's `kind` and
 //! `note`).
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-/// An event row's `kind`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// A Usage's or a Siren's `kind`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Kind {
   /// New tokens under the yellow line: a normal cache hit.
@@ -62,7 +63,7 @@ pub struct Flags {
   pub image: bool,
 }
 
-/// The name of a re-prefill's cause, an event row's `note` on a cold, growth or start request.
+/// The name of a re-prefill's cause, a Usage's `note` on a cold, growth or start request.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Cause {

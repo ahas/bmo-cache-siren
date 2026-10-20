@@ -1,18 +1,21 @@
 //! A transcript tailed from its offset: a session's first request is its start, a cold one after the
-//! lifetime is an expiry, a red row is handed to the alert hook and every row reaches the event log.
+//! lifetime is an expiry, a red Usage is handed to the alert hook and recorded as a Siren, and every
+//! event reaches the event log, from which a new engine restores its window and its numbering.
 
 use std::fs;
 use std::sync::{Arc, Mutex};
 
-use cache_siren::{Alert, AlertHook, Config, DataDir, Engine, Kind, Log, load_recent_events};
-use serde_json::{Value, json};
+use cache_siren::wire::{Happening, Usage};
+use cache_siren::{Alert, AlertHook, Config, DataDir, Engine, Kind, Level, Log, Silent, load_window};
+use serde_json::json;
 
 #[derive(Default)]
 struct Recorded(Mutex<Vec<Alert>>);
 
 impl AlertHook for Recorded {
-  fn alert(&self, alert: &Alert, _muted: bool) {
+  fn alert(&self, alert: &Alert, armed: bool) -> Option<bool> {
     self.0.lock().unwrap().push(alert.clone());
+    Some(armed)
   }
 }
 
@@ -48,21 +51,44 @@ fn a_tailed_transcript_names_its_start_and_its_expiry() {
     ..Config::default()
   };
   let alerts = Arc::new(Recorded::default());
-  let engine = Engine::new(config, data.clone(), log, alerts.clone());
+  let engine = Engine::new(config.clone(), data.clone(), log.clone(), alerts.clone());
 
   assert_eq!(engine.scan_all(), 1);
 
-  let rows = engine.rows();
-  let field = |row: usize, key: &str| rows[row].get(key).cloned().unwrap_or(Value::Null);
-  assert_eq!(rows.len(), 2, "one message id is one request");
-  assert_eq!((field(0, "kind"), field(0, "note")), (json!("start"), json!("session_start")));
-  assert_eq!((field(0, "project"), field(0, "req")), (json!("srv-app"), json!("⌨ check the build")));
-  assert_eq!((field(1, "kind"), field(1, "note")), (json!("cold"), json!("ttl_expired")));
-  assert_eq!((field(1, "level"), field(1, "gap_s")), (json!("red"), json!(7200)));
+  let window = engine.window();
+  let usages: Vec<&Usage> = window
+    .iter()
+    .filter_map(|event| match &event.happening {
+      Happening::Usage(usage) => Some(usage.as_ref()),
+      _ => None,
+    })
+    .collect();
+  assert_eq!(usages.len(), 2, "one message id is one request");
+  assert_eq!((usages[0].kind, usages[0].note.as_str()), (Kind::Start, "session_start"));
+  assert_eq!(
+    (usages[0].project_name.as_str(), usages[0].request_label.as_str()),
+    ("srv-app", "⌨ check the build")
+  );
+  assert_eq!((usages[0].session_id.as_str(), usages[0].harness_name.as_str()), ("s1", "claude-code"));
+  assert_eq!((usages[1].kind, usages[1].note.as_str()), (Kind::Cold, "ttl_expired"));
+  assert_eq!((usages[1].level, usages[1].gap_ms), (Level::Red, Some(7_200_000)));
 
-  let alerts = alerts.0.lock().unwrap();
-  assert_eq!(alerts.iter().map(|alert| alert.kind).collect::<Vec<_>>(), [Kind::Cold]);
-  assert_eq!(load_recent_events(&data.events(), 10).len(), 2);
+  let Happening::Siren(siren) = &window[2].happening else {
+    panic!("the red Usage raised a Siren")
+  };
+  assert_eq!((siren.kind, siren.session_id.as_deref(), siren.audible), (Kind::Cold, Some("s1"), true));
+  assert_eq!(window.iter().map(|event| event.id).collect::<Vec<_>>(), [1, 2, 3]);
+  assert_eq!(
+    alerts.0.lock().unwrap().iter().map(|alert| alert.kind).collect::<Vec<_>>(),
+    [Kind::Cold]
+  );
   assert_eq!(engine.scan_all(), 1, "nothing is read twice");
-  assert_eq!(engine.rows().len(), 2);
+  assert_eq!(engine.window().len(), 3);
+
+  let (kept, highest) = load_window(&data.events(), 10);
+  assert_eq!((kept.len(), highest), (3, 3));
+  let restarted = Engine::new(config, data, log, Arc::new(Silent));
+  assert_eq!(restarted.window(), window, "the window is restored from the event log");
+  let next = restarted.record(Happening::Settings(restarted.settings()));
+  assert_eq!(next.id, 4, "the numbering carries on past the log's highest");
 }

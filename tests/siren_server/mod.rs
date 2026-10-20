@@ -1,4 +1,4 @@
-//! A real cache-siren HTTP server for one test: an ephemeral loopback port, a temporary data directory
+//! A real bmo-cache-siren HTTP server for one test: an ephemeral loopback port, a temporary data directory
 //! and its own config file, read the way the daemon reads it at start. No transcript is scanned and no
 //! background clock runs; only the routes do. The server stops when the value is dropped.
 //!
@@ -8,16 +8,20 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use cache_siren::client::SirenClient;
 use cache_siren::{App, Config, DataDir, Engine, Log, Silent, load_config, router};
 use serde_json::Value;
 use tokio::sync::oneshot;
+
+/// The token every test server takes.
+pub const TOKEN: &str = "test-token";
 
 pub struct SirenServer {
   pub dir: tempfile::TempDir,
   pub config_path: PathBuf,
   pub app: Arc<App>,
   base: String,
-  client: reqwest::Client,
+  http: reqwest::Client,
   stop: Option<oneshot::Sender<()>>,
 }
 
@@ -30,10 +34,10 @@ impl SirenServer {
       std::fs::write(&config_path, config.to_string()).unwrap();
     }
     let log = Arc::new(Log::new(dir.path().join("cache-siren.log"), true));
-    let config = load_config(&config_path, SirenServer::defaults(&dir), &log);
+    let config = load_config(&config_path, Config::defaults(dir.path()), &log);
     let engine = Arc::new(Engine::new(config, DataDir::new(dir.path()), log, Arc::new(Silent)));
     let web = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("web");
-    let app = Arc::new(App::new(engine, web, Some(config_path.clone())));
+    let app = Arc::new(App::new(engine, web, Some(config_path.clone()), TOKEN));
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
@@ -51,14 +55,9 @@ impl SirenServer {
       config_path,
       app,
       base,
-      client: reqwest::Client::new(),
+      http: reqwest::Client::new(),
       stop: Some(stop),
     }
-  }
-
-  /// The defaults of a daemon whose data directory is this server's.
-  pub fn defaults(dir: &tempfile::TempDir) -> Config {
-    Config::defaults(dir.path())
   }
 
   /// The address of one path on this server.
@@ -70,11 +69,27 @@ impl SirenServer {
     self.app.engine()
   }
 
+  /// What makes the service's own client of this server with its token. The client waits on its
+  /// answers, so it is made and used where blocking is allowed, such as a blocking task.
+  pub fn client(&self) -> impl FnOnce() -> SirenClient + Send + 'static {
+    let base = self.base.clone();
+    move || SirenClient::new(base, TOKEN)
+  }
+
+  /// A request carrying the token and asking for JSON.
+  pub fn request(&self, method: reqwest::Method, path: &str) -> reqwest::RequestBuilder {
+    self
+      .http
+      .request(method, self.url(path))
+      .bearer_auth(TOKEN)
+      .header("Accept", "application/json")
+  }
+
   /// One request; the status and the decoded JSON body, for success and error answers alike.
-  pub async fn call(&self, method: reqwest::Method, path: &str, body: Option<Vec<u8>>) -> (u16, Value) {
-    let mut request = self.client.request(method, format!("{}{path}", self.base));
+  pub async fn call(&self, method: reqwest::Method, path: &str, body: Option<&Value>) -> (u16, Value) {
+    let mut request = self.request(method, path);
     if let Some(body) = body {
-      request = request.header("Content-Type", "application/json").body(body);
+      request = request.json(body);
     }
     let response = request.send().await.unwrap();
     let status = response.status().as_u16();
@@ -86,11 +101,11 @@ impl SirenServer {
   }
 
   pub async fn post(&self, path: &str, body: &Value) -> (u16, Value) {
-    self.call(reqwest::Method::POST, path, Some(body.to_string().into_bytes())).await
+    self.call(reqwest::Method::POST, path, Some(body)).await
   }
 
-  pub async fn post_raw(&self, path: &str, raw: &[u8]) -> (u16, Value) {
-    self.call(reqwest::Method::POST, path, Some(raw.to_vec())).await
+  pub async fn patch(&self, path: &str, body: &Value) -> (u16, Value) {
+    self.call(reqwest::Method::PATCH, path, Some(body)).await
   }
 
   pub fn config_file(&self) -> Value {

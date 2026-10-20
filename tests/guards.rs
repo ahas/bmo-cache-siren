@@ -7,16 +7,18 @@ use std::path::{Path, PathBuf};
 const ROOT: &str = env!("CARGO_MANIFEST_DIR");
 
 /// The crates the daemon is built from, each from the registry.
-const DEPENDENCIES: [&str; 13] = [
+const DEPENDENCIES: [&str; 15] = [
   "axum",
   "chrono",
   "clap",
   "futures-util",
-  "gethostname",
+  "getrandom",
   "glob",
   "hound",
   "indexmap",
   "reqwest",
+  "rmcp",
+  "schemars",
   "serde",
   "serde_json",
   "tempfile",
@@ -25,8 +27,8 @@ const DEPENDENCIES: [&str; 13] = [
 /// The crates only the tests use.
 const DEV_DEPENDENCIES: [&str; 1] = ["toml"];
 
-/// Folders holding version control and build output, not files of the repository.
-const UNGUARDED_DIRS: [&str; 4] = [".git", "target", "dist", ".build"];
+/// Folders holding version control, build output and installed packages, not files of the repository.
+const UNGUARDED_DIRS: [&str; 5] = [".git", "target", "dist", ".build", "node_modules"];
 
 /// Hangul Jamo, Compatibility Jamo, Jamo Extended-A, Syllables and Jamo Extended-B, by code point.
 const HANGUL: [(u32, u32); 5] =

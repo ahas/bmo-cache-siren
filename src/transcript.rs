@@ -1,15 +1,18 @@
-//! One line of a Claude Code transcript read into an event (docs/api.md, Transcript roots): an assistant
+//! One line of a Claude Code transcript read into a Usage (docs/api.md, Transcript roots): an assistant
 //! request with its usage, a synthetic notice, limit or error, a refusal fallback, a model or effort
 //! command, a compact; user lines only label the next request and mark images and tool results.
 
 use serde_json::{Map, Value};
 
 use crate::attribution::{Kind, Request};
-use crate::clock::{epoch_of, now_local, ts_local};
+use std::collections::BTreeMap;
+
+use crate::clock::{epoch_of, millis_of, now_local, ts_local};
 use crate::config::Config;
-use crate::event::{Event, first_chars, level_for, squeeze, stamp, strip_tags};
+use crate::event::{first_chars, level_for, squeeze, strip_tags};
 use crate::models::{model_name, rate_for};
 use crate::session::Session;
+use crate::wire::Usage;
 
 /// Past this many remembered tool names, the oldest half is let go.
 const TOOL_NAMES_KEPT: usize = 400;
@@ -18,6 +21,8 @@ const TOOL_NAMES_DROPPED: usize = 200;
 const LABEL_CHARS: usize = 70;
 /// A note keeps this many characters.
 const NOTE_CHARS: usize = 90;
+/// The harness whose transcripts these are, as a Usage names it.
+pub const HARNESS: &str = "claude-code";
 
 /// Which transcript a line came from.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -30,7 +35,7 @@ pub struct Origin {
 }
 
 /// Read one parsed transcript line of `session`, which it updates; the event it makes, if any.
-pub fn read_line(line: &Value, origin: &Origin, session: &mut Session, config: &Config) -> Option<Event> {
+pub fn read_line(line: &Value, origin: &Origin, session: &mut Session, config: &Config) -> Option<Usage> {
   let empty = Map::new();
   let line_map = line.as_object().unwrap_or(&empty);
   match line_map.get("type").and_then(Value::as_str) {
@@ -107,7 +112,7 @@ fn read_system(
   origin: &Origin,
   session: &mut Session,
   config: &Config,
-) -> Option<Event> {
+) -> Option<Usage> {
   let mark = Mark {
     line,
     origin,
@@ -159,7 +164,7 @@ fn read_assistant(
   origin: &Origin,
   session: &mut Session,
   config: &Config,
-) -> Option<Event> {
+) -> Option<Usage> {
   let empty = Map::new();
   let message = object(line.get("message")).unwrap_or(&empty);
   let model = message.get("model").and_then(Value::as_str).unwrap_or("");
@@ -238,7 +243,7 @@ fn read_assistant(
   let cause = config.attribute(&Request {
     kind,
     flags: session.flags,
-    mode: "claude-code",
+    mode: HARNESS,
     model,
     last_model: session.last_model.as_deref(),
     gap_s,
@@ -251,15 +256,15 @@ fn read_assistant(
   let cost =
     (input as f64 * rates.input + cc as f64 * rates.cache_write + read as f64 * rates.cache_read) / 1e6;
   event.level = level_for(kind, new, event.backend, config);
-  event.new = new;
-  event.input = input;
-  event.cc = cc;
-  event.read = read;
-  event.out = out;
-  event.ctx = new + read;
-  event.prev_ctx = session.last_ctx;
-  event.gap_s = gap_s.map(|gap| gap.trunc() as i64);
-  event.cost = (cost * 1000.0).round() / 1000.0;
+  event.new_token_count = new;
+  event.input_token_count = input;
+  event.cache_write_token_count = cc;
+  event.cached_token_count = read;
+  event.output_token_count = out;
+  event.context_token_count = new + read;
+  event.previous_context_token_count = session.last_ctx;
+  event.gap_ms = gap_s.map(|gap| (gap * 1000.0).round() as i64);
+  event.cost_usd = (cost * 1000.0).round() / 1000.0;
 
   session.seen = true;
   session.last_ts = at.or(session.last_ts);
@@ -297,43 +302,42 @@ struct Mark<'a> {
 
 impl Mark<'_> {
   /// A row of `kind` with no token counts, timed by the line's timestamp, else now.
-  fn event(&self, session: &Session, kind: Kind, model: &str, note: String) -> Event {
+  fn event(&self, session: &Session, kind: Kind, model: &str, note: String) -> Usage {
     let at = self
       .line
       .get("timestamp")
       .and_then(Value::as_str)
       .and_then(ts_local)
       .unwrap_or_else(now_local);
-    let (ts_kst, date_kst, epoch) = stamp(&at);
     let (_, backend) = rate_for(model);
     let cwd = self.line.get("cwd").and_then(Value::as_str).unwrap_or("");
-    Event {
-      ts_kst,
-      date_kst,
-      epoch,
-      project: self.origin.project.clone(),
-      session: first_chars(&self.origin.sid, 8),
-      sid: self.origin.sid.clone(),
-      agent: Value::Bool(self.origin.is_agent),
-      parent: first_chars(self.origin.parent.as_deref().unwrap_or(""), 8),
-      cwd: cwd.rsplit('/').next().unwrap_or("").into(),
-      mode: "claude-code".into(),
-      model: model.into(),
-      m: model_name(model).into(),
+    Usage {
+      session_id: self.origin.sid.clone(),
+      model_name: model.into(),
+      model_label: model_name(model).into(),
+      at: millis_of(&at),
+      harness_name: HARNESS.into(),
       backend,
       kind,
       level: level_for(kind, 0, backend, self.config),
       note,
-      new: 0,
-      input: 0,
-      cc: 0,
-      read: 0,
-      out: 0,
-      ctx: 0,
-      prev_ctx: 0,
-      gap_s: None,
-      cost: 0.0,
-      req: session.last_req.clone(),
+      new_token_count: 0,
+      input_token_count: 0,
+      cache_write_token_count: 0,
+      cached_token_count: 0,
+      output_token_count: 0,
+      context_token_count: 0,
+      previous_context_token_count: 0,
+      gap_ms: None,
+      cost_usd: 0.0,
+      project_name: self.origin.project.clone(),
+      directory_name: cwd.rsplit('/').next().unwrap_or("").into(),
+      subagent: self.origin.is_agent,
+      parent_session_id: self.origin.parent.clone(),
+      request_label: session.last_req.clone(),
+      scope: None,
+      actor_name: None,
+      labels: BTreeMap::new(),
     }
   }
 }

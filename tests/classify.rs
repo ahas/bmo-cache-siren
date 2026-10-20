@@ -2,7 +2,9 @@
 
 use std::sync::Arc;
 
-use cache_siren::{Config, DataDir, Engine, Event, Kind, Level, Log, Origin, Silent};
+use cache_siren::transcript::Origin;
+use cache_siren::wire::Usage;
+use cache_siren::{Config, DataDir, Engine, Kind, Level, Log, Silent};
 use serde_json::{Value, json};
 
 const SID: &str = "11111111-2222-4333-8444-555555555555";
@@ -42,14 +44,14 @@ fn fixture() -> Fixture {
 fn origin() -> Origin {
   Origin {
     sid: SID.into(),
-    project: "bmo".into(),
+    project: "app".into(),
     is_agent: false,
     parent: None,
   }
 }
 
-fn read(line: Value) -> Event {
-  fixture().engine.handle(&line, &origin()).expect("the line makes a row")
+fn read(line: Value) -> Usage {
+  fixture().engine.handle(&line, &origin()).expect("the line makes a Usage")
 }
 
 #[test]

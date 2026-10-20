@@ -2,6 +2,7 @@
 dist/
 .build/
 target/
+package/node_modules/
 # Holds local paths, the voice command and the port; each host makes its own (created with defaults on first run).
 # A comment on the same line would join the pattern and stop the ignore, so comments stay on their own lines.
 config.json

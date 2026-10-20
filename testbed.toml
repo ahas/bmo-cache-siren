@@ -2,9 +2,11 @@
 testbed = 0
 name = "bmo-cache-siren"
 
-# Every test is a test of the one Cargo package, under tests/.
+# The Cargo package's tests are under tests/. The TypeScript client in `package/` is a project of its own,
+# found by its manifest and its lockfile, and checked and tested by its manifest's `check` script.
 [test]
-languages = ["cargo"]
+languages = ["cargo", "bun"]
+setup = ["bun install --frozen-lockfile --cwd package"]
 
 [check]
 quick = ["korean", "layout", "dependencies"]
@@ -27,13 +29,15 @@ lane = "wide"
 id = "fmt"
 command = "cargo fmt --check"
 
+# The one binary serves the API, runs the command's verbs, starts the MCP server and prints the OpenAPI
+# document.
 [build]
-binaries = ["cache-siren"]
+binaries = ["bmo-cache-siren"]
 
 # The daemon runs from its own deploy tree: a release is a worktree of the commit, so the pages in web/
-# stand beside bin/cache-siren, which finds them there. Its config file lives in the data root and is
-# kept across releases; `POST /ttl` writes back into it. The unit is restarted by every deployment, so a
-# release's pages and binary go live together.
+# stand beside bin/bmo-cache-siren, which finds them there. Its config file lives in the data root and is
+# kept across releases; `PATCH /settings` writes back into it. The unit is restarted by every deployment,
+# so a release's pages and binary go live together.
 [deploy]
 root = "~/.local/share/bmo-cache-siren"
 data_root = "~/.local/share/bmo-cache-siren/data"

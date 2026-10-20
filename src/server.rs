@@ -1,51 +1,62 @@
-//! The HTTP routes (docs/api.md, Served routes): the pages, the assets, the reads, the stream and the
-//! four posts, over one engine. Every JSON answer is UTF-8 with `Cache-Control: no-store`.
+//! The HTTP API and the pages (docs/api.md): health, the events and their stream, the stats, the settings
+//! and the siren tests behind the bearer token, and the pages and their assets outside it. Every JSON
+//! answer is UTF-8 with `Cache-Control: no-store`, and every failure is the common error shape.
 
-use std::collections::HashMap;
 use std::convert::Infallible;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use axum::Router;
 use axum::body::{Body, Bytes, to_bytes};
-use axum::extract::{Query, State};
-use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, Uri, header};
-use axum::response::sse::{Event as SseEvent, Sse};
+use axum::extract::rejection::QueryRejection;
+use axum::extract::{Query, Request, State};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
+use axum::middleware::{self, Next};
+use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use futures_util::stream::{self, Stream, StreamExt};
-use serde_json::{Map, Value, json};
+use serde::Deserialize;
+use serde::Serialize;
+use tokio::sync::watch;
 
-use crate::attribution::Kind;
-use crate::config::{persist_config, ttl_body};
-use crate::engine::{Alert, Engine, Row};
+use crate::clock::now_millis;
+use crate::config::persist_config;
+use crate::engine::{Engine, Filter, Refusal};
+use crate::wire::{Event, EventQuery, Health, NewUsage, SettingsPatch, SirenTest, StatsQuery, WireError};
 
-/// The largest POST body taken.
+/// The largest body taken.
 pub const MAX_BODY_BYTES: usize = 65_536;
-/// The two overlay images a host may place in the data directory.
+/// The two page images a host may place in the data directory.
 const ASSETS: [&str; 2] = ["siren_on.png", "siren_off.png"];
-/// How long the stream waits for a new row before looking again.
-const STREAM_WAIT: Duration = Duration::from_secs(1);
-/// How often the stream sends the stats object.
-const STREAM_STATS_EVERY: Duration = Duration::from_secs(2);
+/// How often a comment line keeps the stream open.
+const KEEP_ALIVE: Duration = Duration::from_secs(15);
 
-/// What the routes serve from: the engine, the pages and the config file `POST /ttl` merges into.
+/// What the routes serve from: the engine, the pages, the config file the settings merge into and the
+/// token every API route takes.
 pub struct App {
   engine: Arc<Engine>,
   web_dir: PathBuf,
   config_path: Option<PathBuf>,
-  /// Serialises TTL updates, so the live table and the file agree on the last one.
-  ttl_lock: Mutex<()>,
+  token: String,
+  /// Serialises settings changes, so the live settings and the file agree on the last one.
+  settings_lock: Mutex<()>,
 }
 
 impl App {
-  pub fn new(engine: Arc<Engine>, web_dir: impl Into<PathBuf>, config_path: Option<PathBuf>) -> App {
+  pub fn new(
+    engine: Arc<Engine>,
+    web_dir: impl Into<PathBuf>,
+    config_path: Option<PathBuf>,
+    token: impl Into<String>,
+  ) -> App {
     App {
       engine,
       web_dir: web_dir.into(),
       config_path,
-      ttl_lock: Mutex::new(()),
+      token: token.into(),
+      settings_lock: Mutex::new(()),
     }
   }
 
@@ -61,165 +72,96 @@ impl App {
 type Shared = State<Arc<App>>;
 
 pub fn router(app: Arc<App>) -> Router {
-  Router::new()
-    .route("/", get(index))
-    .route("/index.html", get(index))
-    .route("/demo", get(demo))
-    .route("/asset/{*name}", get(asset))
+  let api = Router::new()
     .route("/health", get(health))
+    .route("/events", get(events).post(create_usage))
     .route("/stats", get(stats))
-    .route("/events", get(events).post(post_events))
-    .route("/stream", get(stream_rows))
-    .route("/ctl", get(ctl).post(post_ctl))
-    .route("/ttl", get(ttl).post(post_ttl))
-    .route("/test-siren", axum::routing::post(test_siren))
-    .fallback(unknown)
+    .route("/settings", get(settings).patch(change_settings))
+    .route("/siren-tests", post(siren_test))
+    .route_layer(middleware::from_fn_with_state(app.clone(), authorize));
+  let pages = Router::new()
+    .route("/", get(index))
+    .route("/demo", get(demo))
+    .route("/asset/{name}", get(asset));
+  api
+    .merge(pages)
+    .fallback(no_route)
+    .method_not_allowed_fallback(no_route)
     .with_state(app)
 }
 
 /// A JSON answer.
-fn json_answer(status: StatusCode, body: Value) -> Response {
-  let mut response = (status, body.to_string()).into_response();
+fn json_answer(status: StatusCode, body: &impl Serialize) -> Response {
+  let text = serde_json::to_string(body).unwrap_or_else(|_| "{}".into());
+  let mut response = (status, text).into_response();
   let headers = response.headers_mut();
   headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/json; charset=utf-8"));
   headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
   response
 }
 
-/// A file as it is on disk; 500 with the reason and the path tried when it cannot be read.
-async fn file_answer(path: PathBuf, content_type: &'static str) -> Response {
-  match tokio::fs::read(&path).await {
-    Ok(body) => {
-      let headers = [(header::CONTENT_TYPE, content_type), (header::CACHE_CONTROL, "no-store")];
-      (headers, body).into_response()
-    }
-    Err(why) => json_answer(
-      StatusCode::INTERNAL_SERVER_ERROR,
-      json!({"ok": false, "error": why.to_string(), "file": path}),
-    ),
-  }
-}
-
-async fn index(State(app): Shared) -> Response {
-  file_answer(app.web_dir.join("index.html"), "text/html; charset=utf-8").await
-}
-
-async fn demo(State(app): Shared) -> Response {
-  file_answer(app.web_dir.join("demo.html"), "text/html; charset=utf-8").await
-}
-
-async fn asset(State(app): Shared, uri: Uri) -> Response {
-  let name = uri.path().rsplit('/').next().unwrap_or("");
-  if !ASSETS.contains(&name) {
-    return json_answer(StatusCode::NOT_FOUND, json!({"ok": false, "error": "asset not allowed"}));
-  }
-  file_answer(app.engine.data_dir().root().join(name), "image/png").await
-}
-
-async fn health(State(app): Shared) -> Response {
-  let stats = app.engine.stats();
+/// A failure in the common error shape.
+fn refused(status: StatusCode, code: &str, error: impl Into<String>) -> Response {
   json_answer(
-    StatusCode::OK,
-    json!({"ok": true, "service": "cache-siren", "uptime_s": stats["uptime_s"], "files": stats["files"],
-           "last_event": stats["last_event"], "events": app.engine.rows().len(), "quota": stats["quota"]}),
+    status,
+    &WireError {
+      code: code.into(),
+      error: error.into(),
+    },
   )
 }
 
-async fn stats(State(app): Shared) -> Response {
-  json_answer(StatusCode::OK, app.engine.stats())
+fn bad_request(error: impl Into<String>) -> Response {
+  refused(StatusCode::BAD_REQUEST, "bad-request", error)
 }
 
-async fn ctl(State(app): Shared) -> Response {
-  json_answer(StatusCode::OK, json!(app.engine.ctl()))
+fn refusal(refusal: Refusal) -> Response {
+  match refusal {
+    Refusal::BadRequest(why) => bad_request(why),
+    Refusal::Conflict(why) => refused(StatusCode::CONFLICT, "conflict", why),
+    Refusal::Gone(why) => refused(StatusCode::GONE, "gone", why),
+  }
 }
 
-async fn ttl(State(app): Shared) -> Response {
-  json_answer(StatusCode::OK, app.engine.config().ttl())
+async fn no_route() -> Response {
+  refused(StatusCode::NOT_FOUND, "no-route", "No route answers this method and path.")
 }
 
-/// An integer query parameter; its default where it is missing or no integer.
-fn number(query: &HashMap<String, String>, name: &str, default: i64) -> i64 {
-  query.get(name).and_then(|value| value.parse().ok()).unwrap_or(default)
+fn too_large() -> Response {
+  refused(
+    StatusCode::PAYLOAD_TOO_LARGE,
+    "too-large",
+    format!("The body is over {MAX_BODY_BYTES} bytes."),
+  )
 }
 
-fn seq_of(row: &Row) -> u64 {
-  row.get("seq").and_then(Value::as_u64).unwrap_or(0)
+/// The token a reader that cannot set a header gives in the query (RFC 6750, section 2.3).
+#[derive(Deserialize)]
+struct TokenQuery {
+  access_token: Option<String>,
 }
 
-fn is_local(row: &Row) -> bool {
-  row.get("backend").and_then(Value::as_str) == Some("local")
+/// Every API request is let in only with the service's token, as its bearer or as `access_token`.
+async fn authorize(State(app): Shared, request: Request, next: Next) -> Response {
+  let bearer = request
+    .headers()
+    .get(header::AUTHORIZATION)
+    .and_then(|value| value.to_str().ok())
+    .and_then(|value| value.strip_prefix("Bearer "))
+    .map(str::to_string);
+  let given = bearer.or_else(|| {
+    Query::<TokenQuery>::try_from_uri(request.uri())
+      .ok()
+      .and_then(|query| query.0.access_token)
+  });
+  match given {
+    Some(token) if token == app.token => next.run(request).await,
+    Some(_) => refused(StatusCode::UNAUTHORIZED, "unauthorized", "The bearer token is not the service's."),
+    None => refused(StatusCode::UNAUTHORIZED, "unauthorized", "The request carries no bearer token."),
+  }
 }
 
-async fn events(State(app): Shared, Query(query): Query<HashMap<String, String>>) -> Response {
-  let limit = number(&query, "limit", 80);
-  let since = number(&query, "since", 0);
-  let show_local = query.get("local").map(String::as_str) == Some("1");
-  let seq = app.engine.seq();
-  let rows: Vec<Row> = app
-    .engine
-    .rows()
-    .into_iter()
-    .filter(|row| seq_of(row) as i64 > since && (show_local || !is_local(row)))
-    .collect();
-  // The newest `limit` rows; 0 answers all of them.
-  let skip = if limit > 0 { rows.len().saturating_sub(limit as usize) } else { 0 };
-  let rows: Vec<Row> = rows.into_iter().skip(skip).collect();
-  json_answer(StatusCode::OK, json!({"events": rows, "seq": seq}))
-}
-
-/// What the stream holds between two looks: the last row sent and when the stats last went.
-struct Cursor {
-  app: Arc<App>,
-  since: u64,
-  stats_at: Option<Instant>,
-  changes: tokio::sync::watch::Receiver<u64>,
-}
-
-async fn stream_rows(
-  State(app): Shared,
-  Query(query): Query<HashMap<String, String>>,
-) -> impl IntoResponse {
-  let since = query
-    .get("since")
-    .and_then(|value| value.parse().ok())
-    .unwrap_or_else(|| app.engine.seq());
-  let changes = app.engine.subscribe();
-  let cursor = Cursor {
-    app,
-    since,
-    stats_at: None,
-    changes,
-  };
-  let headers = [
-    (header::CONTENT_TYPE, "text/event-stream; charset=utf-8"),
-    (header::CACHE_CONTROL, "no-store"),
-  ];
-  (headers, Sse::new(feed(cursor)))
-}
-
-/// Every row after the cursor as an `ev` event as it arrives, and the stats object about every two
-/// seconds, until the client leaves.
-fn feed(cursor: Cursor) -> impl Stream<Item = Result<SseEvent, Infallible>> {
-  stream::unfold(cursor, |mut cursor| async move {
-    let _ = tokio::time::timeout(STREAM_WAIT, cursor.changes.changed()).await;
-    let mut out = Vec::new();
-    for row in cursor.app.engine.rows() {
-      let seq = seq_of(&row);
-      if seq > cursor.since {
-        cursor.since = seq;
-        out.push(Ok(SseEvent::default().event("ev").data(Value::Object(row).to_string())));
-      }
-    }
-    if cursor.stats_at.is_none_or(|at| at.elapsed() > STREAM_STATS_EVERY) {
-      cursor.stats_at = Some(Instant::now());
-      out.push(Ok(SseEvent::default().event("stats").data(cursor.app.engine.stats().to_string())));
-    }
-    Some((stream::iter(out), cursor))
-  })
-  .flatten()
-}
-
-/// A POST body up to `MAX_BODY_BYTES`; none when it is larger.
+/// A body up to `MAX_BODY_BYTES`; none when it is larger.
 async fn read_body(headers: &HeaderMap, body: Body) -> Option<Bytes> {
   let declared = headers
     .get(header::CONTENT_LENGTH)
@@ -231,109 +173,208 @@ async fn read_body(headers: &HeaderMap, body: Body) -> Option<Bytes> {
   to_bytes(body, MAX_BODY_BYTES).await.ok()
 }
 
-fn too_large() -> Response {
-  json_answer(StatusCode::PAYLOAD_TOO_LARGE, json!({"ok": false, "error": "body too large"}))
+async fn health() -> Response {
+  json_answer(
+    StatusCode::OK,
+    &Health {
+      ready: true,
+      reason: None,
+      version: env!("CARGO_PKG_VERSION").into(),
+    },
+  )
 }
 
-/// A body as JSON: an empty body is an empty object; none when it is not JSON.
-fn parse(raw: &[u8]) -> Option<Value> {
-  if raw.is_empty() {
-    return Some(Value::Object(Map::new()));
+/// The stream by default, the page to a reader asking for JSON (docs/api.md, `GET /events`).
+async fn events(
+  State(app): Shared,
+  headers: HeaderMap,
+  query: Result<Query<EventQuery>, QueryRejection>,
+) -> Response {
+  let mut query = match query {
+    Ok(Query(query)) => query,
+    Err(rejection) => return bad_request(rejection.body_text()),
+  };
+  let wants_page = headers
+    .get(header::ACCEPT)
+    .and_then(|value| value.to_str().ok())
+    .is_some_and(|accept| accept.contains("application/json"));
+  if wants_page {
+    return match app.engine.page(&query) {
+      Ok(page) => json_answer(StatusCode::OK, &page),
+      Err(why) => refusal(why),
+    };
   }
-  serde_json::from_slice(raw).ok()
+  if query.after.is_none() {
+    let last = headers.get("last-event-id").and_then(|value| value.to_str().ok());
+    match last.map(|last| last.trim().parse::<i64>()) {
+      Some(Ok(last)) => query.after = Some(last),
+      Some(Err(_)) => return bad_request("Last-Event-ID must be an event number"),
+      None => {}
+    }
+  }
+  let filter = match Filter::of(&query) {
+    Ok(filter) => filter,
+    Err(why) => return refusal(why),
+  };
+  let start = match app.engine.stream_start(query.after) {
+    Ok(start) => start,
+    Err(why) => return refusal(why),
+  };
+  let reader = Reader {
+    changes: app.engine.subscribe(),
+    app,
+    cursor: start,
+    filter,
+  };
+  let mut response =
+    Sse::new(feed(reader)).keep_alive(KeepAlive::new().interval(KEEP_ALIVE)).into_response();
+  response
+    .headers_mut()
+    .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+  response
 }
 
-async fn post_ttl(State(app): Shared, headers: HeaderMap, body: Body) -> Response {
-  let Some(raw) = read_body(&headers, body).await else { return too_large() };
-  let Some(body) = parse(&raw) else {
-    return json_answer(StatusCode::BAD_REQUEST, json!({"ok": false, "error": "body_not_json"}));
-  };
-  let update = match ttl_body(&body) {
-    Ok(update) => update,
-    Err(refused) => {
-      return json_answer(StatusCode::BAD_REQUEST, json!({"ok": false, "error": refused.code()}));
+/// What the stream holds between two looks: the last event sent and what it lets through.
+struct Reader {
+  app: Arc<App>,
+  cursor: i64,
+  filter: Filter,
+  changes: watch::Receiver<i64>,
+}
+
+/// Every event past the cursor that the filter lets through, as it is recorded, until the reader leaves.
+fn feed(reader: Reader) -> impl Stream<Item = Result<SseEvent, Infallible>> {
+  stream::unfold(reader, |mut reader| async move {
+    loop {
+      let events = reader.app.engine.events_after(reader.cursor, &reader.filter);
+      if let Some(last) = events.last() {
+        reader.cursor = last.id;
+        let sent: Vec<Result<SseEvent, Infallible>> =
+          events.iter().map(|event| Ok(sse_of(event))).collect();
+        return Some((stream::iter(sent), reader));
+      }
+      if reader.changes.changed().await.is_err() {
+        return None;
+      }
     }
+  })
+  .flatten()
+}
+
+fn sse_of(event: &Event) -> SseEvent {
+  SseEvent::default()
+    .event(event.happening.kind())
+    .id(event.id.to_string())
+    .data(serde_json::to_string(event).unwrap_or_default())
+}
+
+async fn create_usage(State(app): Shared, headers: HeaderMap, body: Body) -> Response {
+  let Some(raw) = read_body(&headers, body).await else { return too_large() };
+  let body: NewUsage = match serde_json::from_slice(&raw) {
+    Ok(body) => body,
+    Err(why) => return bad_request(format!("The body is not a usage: {why}.")),
   };
+  match app.engine.posted(body) {
+    Ok(usage) => json_answer(StatusCode::CREATED, &app.engine.record_usage(usage, false)),
+    Err(why) => bad_request(why),
+  }
+}
+
+async fn stats(State(app): Shared, query: Result<Query<StatsQuery>, QueryRejection>) -> Response {
+  let query = match query {
+    Ok(Query(query)) => query,
+    Err(rejection) => return bad_request(rejection.body_text()),
+  };
+  match app.engine.stats(&query) {
+    Ok(stats) => json_answer(StatusCode::OK, &stats),
+    Err(why) => refusal(why),
+  }
+}
+
+async fn settings(State(app): Shared) -> Response {
+  json_answer(StatusCode::OK, &app.engine.settings())
+}
+
+async fn change_settings(State(app): Shared, headers: HeaderMap, body: Body) -> Response {
+  let Some(raw) = read_body(&headers, body).await else { return too_large() };
+  let patch: SettingsPatch = match serde_json::from_slice(&raw) {
+    Ok(patch) => patch,
+    Err(why) => return bad_request(format!("The body is not a settings patch: {why}.")),
+  };
+  let _held = app.settings_lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+  let (settings, changed) = match app.engine.change_settings(&patch) {
+    Ok(changed) => changed,
+    Err(why) => return refusal(why),
+  };
+  if changed.is_empty() {
+    return json_answer(StatusCode::OK, &settings);
+  }
   let engine = &app.engine;
-  let _held = app.ttl_lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-  let (before, after) = engine.with_config(|config| {
-    let before = config.ttl();
-    update.apply(config);
-    (before, config.ttl())
-  });
   engine
     .log()
-    .info("ttl set", json!({"before": before, "after": after, "config": app.config_path}));
-  let persisted = match &app.config_path {
-    None => false,
-    Some(path) => match persist_config(path, &update.to_map()) {
-      Ok(()) => true,
-      Err(why) => {
-        engine
-          .log()
-          .error("ttl persist failed", json!({"err": why.to_string(), "config": path}));
-        let mut answer = json!({"ok": false, "error": "config_write_failed", "applied": true});
-        merge(&mut answer, after);
-        return json_answer(StatusCode::INTERNAL_SERVER_ERROR, answer);
-      }
+    .info("settings changed", serde_json::json!({"changed": changed, "config": app.config_path}));
+  if let Some(path) = &app.config_path
+    && let Err(why) = persist_config(path, &changed)
+  {
+    engine
+      .log()
+      .error("settings persist failed", serde_json::json!({"err": why.to_string(), "config": path}));
+    return refused(
+      StatusCode::INTERNAL_SERVER_ERROR,
+      "failed",
+      format!("The settings changed and hold now, but the config file could not be written: {why}."),
+    );
+  }
+  json_answer(StatusCode::OK, &settings)
+}
+
+async fn siren_test(State(app): Shared, headers: HeaderMap, body: Body) -> Response {
+  if read_body(&headers, body).await.is_none() {
+    return too_large();
+  }
+  let sounded = app.engine.test_siren();
+  json_answer(
+    StatusCode::OK,
+    &SirenTest {
+      sounded,
+      at: now_millis(),
     },
-  };
-  let mut answer = json!({"ok": true, "persisted": persisted});
-  merge(&mut answer, after);
-  json_answer(StatusCode::OK, answer)
+  )
 }
 
-/// Add the keys of `extra` to the object `into`.
-fn merge(into: &mut Value, extra: Value) {
-  if let (Value::Object(into), Value::Object(extra)) = (into, extra) {
-    into.extend(extra);
-  }
-}
-
-async fn post_events(State(app): Shared, headers: HeaderMap, body: Body) -> Response {
-  let Some(raw) = read_body(&headers, body).await else { return too_large() };
-  let body = parse(&raw).unwrap_or_else(|| Value::Object(Map::new()));
-  match app.engine.external(&body) {
-    Ok(event) => {
-      let seq = app.engine.emit(event, false);
-      json_answer(StatusCode::OK, json!({"ok": true, "seq": seq}))
+/// A page as it is on disk.
+async fn page(app: &App, name: &str) -> Response {
+  match tokio::fs::read(app.web_dir.join(name)).await {
+    Ok(body) => {
+      let headers =
+        [(header::CONTENT_TYPE, "text/html; charset=utf-8"), (header::CACHE_CONTROL, "no-store")];
+      (headers, body).into_response()
     }
-    Err(why) => json_answer(StatusCode::BAD_REQUEST, json!({"ok": false, "error": why})),
+    Err(why) => refused(
+      StatusCode::INTERNAL_SERVER_ERROR,
+      "failed",
+      format!("The page {name} cannot be read: {}.", why.kind()),
+    ),
   }
 }
 
-async fn post_ctl(State(app): Shared, headers: HeaderMap, body: Body) -> Response {
-  let Some(raw) = read_body(&headers, body).await else { return too_large() };
-  let body = match parse(&raw) {
-    Some(Value::Object(body)) => body,
-    _ => Map::new(),
-  };
-  let (before, after) = app.engine.set_ctl(&body);
-  app.engine.log().info("ctl", json!({"before": before, "after": after}));
-  json_answer(StatusCode::OK, json!(after))
+async fn index(State(app): Shared) -> Response {
+  page(&app, "index.html").await
 }
 
-async fn test_siren(State(app): Shared, headers: HeaderMap, body: Body) -> Response {
-  if read_body(&headers, body).await.is_none() {
-    return too_large();
-  }
-  let muted = app.engine.alert(&Alert {
-    kind: Kind::Cold,
-    project: "test".into(),
-    sid: "test".into(),
-    new: 123_456,
-    note: "manual test".into(),
-    force: true,
-  });
-  json_answer(StatusCode::OK, json!({"ok": true, "muted": muted}))
+async fn demo(State(app): Shared) -> Response {
+  page(&app, "demo.html").await
 }
 
-async fn unknown(method: Method, headers: HeaderMap, body: Body) -> Response {
-  if method == Method::GET {
-    return json_answer(StatusCode::NOT_FOUND, json!({"ok": false, "error": "not found"}));
+async fn asset(State(app): Shared, axum::extract::Path(name): axum::extract::Path<String>) -> Response {
+  let missing = || refused(StatusCode::NOT_FOUND, "not-found", format!("There is no asset {name}."));
+  if !ASSETS.contains(&name.as_str()) {
+    return missing();
   }
-  if read_body(&headers, body).await.is_none() {
-    return too_large();
+  match tokio::fs::read(app.engine.data_dir().root().join(&name)).await {
+    Ok(body) => {
+      ([(header::CONTENT_TYPE, "image/png"), (header::CACHE_CONTROL, "no-store")], body).into_response()
+    }
+    Err(_) => missing(),
   }
-  json_answer(StatusCode::NOT_FOUND, json!({"ok": false}))
 }

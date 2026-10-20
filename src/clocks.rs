@@ -1,15 +1,12 @@
-//! The daemon's own clocks: the transcript scan, the event-log prune, the quota poll and the heartbeat
-//! (docs/api.md, Consumed contracts).
+//! The daemon's own clocks: the transcript scan, the event-log prune and the alive line.
 
 use std::sync::Arc;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use serde_json::{Value, json};
+use serde_json::json;
 
-use crate::clock::now_local;
 use crate::engine::Engine;
-use crate::quota::quota_from;
 
 /// Scan passes between two saves of the transcript offsets.
 const SAVE_EVERY_PASSES: u64 = 30;
@@ -17,24 +14,16 @@ const SAVE_EVERY_PASSES: u64 = 30;
 const FIRST_PRUNE_AFTER: Duration = Duration::from_secs(30);
 /// The prune never runs more often than this.
 const PRUNE_AT_MOST_EVERY_S: f64 = 600.0;
-const QUOTA_EVERY: Duration = Duration::from_secs(30);
-const HEARTBEAT_EVERY: Duration = Duration::from_secs(45);
 /// One alive line this often, even with no requests, so a log-staleness watcher does not misfire.
 const ALIVE_EVERY: Duration = Duration::from_secs(600);
-const OUTSIDE_TIMEOUT: Duration = Duration::from_secs(5);
-/// How much of an outside failure a log line keeps.
-const ERR_CHARS: usize = 120;
 
-/// Start the scan and prune clocks on threads of their own, and the quota and heartbeat clocks on the
-/// runtime this is called on.
+/// Start the scan, prune and alive clocks, each on a thread of its own.
 pub fn start(engine: Arc<Engine>) {
   let scanning = engine.clone();
   thread::spawn(move || scan_loop(&scanning));
   let pruning = engine.clone();
   thread::spawn(move || prune_loop(&pruning));
-  let client = reqwest::Client::builder().timeout(OUTSIDE_TIMEOUT).build().unwrap_or_default();
-  tokio::spawn(quota_loop(engine.clone(), client.clone()));
-  tokio::spawn(heartbeat_loop(engine, client));
+  thread::spawn(move || alive_loop(&engine));
 }
 
 /// Tail every recent transcript each `poll_s`, keeping the offsets every 30 passes.
@@ -60,72 +49,15 @@ fn prune_loop(engine: &Engine) {
   }
 }
 
-/// Read the quota source every 30 seconds; a failure is logged and the last reading kept. Where there is
-/// no source nothing is asked, so the log does not fill with a failure every 30 seconds.
-async fn quota_loop(engine: Arc<Engine>, client: reqwest::Client) {
+/// Write an alive line every ten minutes.
+fn alive_loop(engine: &Engine) {
   loop {
-    let url = engine.config().quota_url;
-    if !url.is_empty() {
-      match fetch(&client, &url).await {
-        Ok(answer) => engine.set_quota(quota_from(&answer, &now_local().format("%H:%M").to_string())),
-        Err(why) => engine.log().warn("quota fetch failed", json!({"err": cut(&why)})),
-      }
-    }
-    tokio::time::sleep(QUOTA_EVERY).await;
+    let window = engine.window();
+    engine.log().info(
+      "heartbeat alive",
+      json!({"events": window.len(), "files": engine.files_watched(),
+             "last_event": window.last().map(|event| event.id)}),
+    );
+    thread::sleep(ALIVE_EVERY);
   }
-}
-
-async fn fetch(client: &reqwest::Client, url: &str) -> Result<Value, String> {
-  let answer = client.get(url).send().await.map_err(|why| why.to_string())?;
-  let answer = answer.error_for_status().map_err(|why| why.to_string())?;
-  answer.json::<Value>().await.map_err(|why| why.to_string())
-}
-
-/// Write an alive line every ten minutes, and post the heartbeat every 45 seconds where the deployment
-/// names a service registry.
-async fn heartbeat_loop(engine: Arc<Engine>, client: reqwest::Client) {
-  let mut alive_at: Option<Instant> = None;
-  loop {
-    if alive_at.is_none_or(|at| at.elapsed() >= ALIVE_EVERY) {
-      alive_at = Some(Instant::now());
-      let stats = engine.stats();
-      engine.log().info(
-        "heartbeat alive",
-        json!({"events": engine.rows().len(), "files": stats["files"], "last_event": stats["last_event"],
-               "uptime_s": stats["uptime_s"]}),
-      );
-    }
-    let config = engine.config();
-    if !config.heartbeat_url.is_empty() {
-      let node = if config.node.is_empty() {
-        gethostname::gethostname().to_string_lossy().into_owned()
-      } else {
-        config.node.clone()
-      };
-      let sent = client
-        .post(&config.heartbeat_url)
-        .json(&heartbeat_body(&node, config.port))
-        .send()
-        .await
-        .and_then(reqwest::Response::error_for_status);
-      if let Err(why) = sent {
-        engine.log().warn("heartbeat failed", json!({"err": cut(&why.to_string())}));
-      }
-    }
-    tokio::time::sleep(HEARTBEAT_EVERY).await;
-  }
-}
-
-/// The heartbeat's body (docs/api.md, Heartbeat).
-pub fn heartbeat_body(node: &str, port: u16) -> Value {
-  json!({
-    "name": "cache-siren", "node": node, "port": port, "kind": "service", "engine": "monitor",
-    "health_url": format!("http://127.0.0.1:{port}/health"), "endpoint": format!("http://127.0.0.1:{port}/"),
-    "status": "up",
-    "capabilities": {"notes": "live per-request cache/new-token watch + siren for Anthropic requests (transcript tail)"},
-  })
-}
-
-fn cut(text: &str) -> String {
-  text.chars().take(ERR_CHARS).collect()
 }

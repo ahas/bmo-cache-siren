@@ -1,44 +1,44 @@
 # Porting
 
-What runs anywhere, what is macOS only, what depends on outside services, and the least needed to
-run on Linux. It is written so that a person or an agent setting the siren up on a new host can
-follow it step by step.
+What runs anywhere, what is macOS only, and the least needed to run on Linux. It is written so that a
+person or an agent setting the siren up on a new host can follow it step by step.
 
-In one line: the daemon and its browser page run on any OS a Rust toolchain builds for; the overlay
-app, the siren sound and autostart are per platform; the quota header and the heartbeat need
-services of your own and are optional.
+In one line: the daemon, its client, its MCP server and its browser page run on any OS a Rust toolchain
+builds for; the overlay app, the siren player and autostart are per platform. The siren calls no other
+service, so nothing else has to be running.
 
 ## The OS-independent core
 
-- **The daemon** (`cache-siren serve`, built from `src/`): one binary of registry crates. It tails
+- **The daemon** (`bmo-cache-siren serve`, built from `src/`): one binary of registry crates. It tails
   transcripts under `projects_globs`, takes posted usage on `POST /events`, classifies each request
-  and serves the page, the API and the event stream on `127.0.0.1:<port>`.
+  and serves the pages, the API and the event stream on `127.0.0.1:<port>`.
 - **What it writes:** everything under `~/.claude/cache-siren/`, or the directory `--data-dir` names:
-  the log, the event log, the tail offsets, the overlay control file and the generated siren sound.
-  `docs/api.md` lists each file.
+  the log, the event log, the tail offsets, the API token and the generated siren sound. `docs/api.md`
+  lists each file.
 - **The page** (`web/`): the live table, served by the daemon at `/`, with a frozen demo at `/demo`.
-  Any browser shows it.
-- **The table survives a restart:** at start the daemon restores the last `ring` rows from the event
-  log, and the rolling five-hour window from the last five hours of it.
-- **The CLI** (the same binary's other verbs): every verb works on any OS; `restart` asks launchd on
-  macOS and systemd --user elsewhere.
+  Any browser shows it, opened at the address `bmo-cache-siren page` prints.
+- **The table survives a restart:** at start the daemon restores the newest `ring` events from the
+  event log, and their numbering carries on.
+- **The command** (the same binary's other verbs) and **the MCP server** (`bmo-cache-siren mcp`): every
+  verb works on any OS; `restart` asks launchd on macOS and systemd --user elsewhere.
 
 ## macOS only, and the Linux replacement
 
 | macOS | Linux replacement |
 | --- | --- |
-| The overlay app (`macos/`, Swift, an always-on-top panel showing the page) | an always-on-top browser window, such as `chromium --app=http://127.0.0.1:9022`, or a thin wrapper of your own |
-| `afplay` for the siren | `paplay`, `aplay` or `ffplay -nodisp -autoexit`, which needs a change where the daemon plays the sound |
+| The overlay app (`macos/`, Swift, an always-on-top panel showing the page) | an always-on-top browser window, such as `chromium --app="$(bmo-cache-siren page)"`, or a thin wrapper of your own |
+| `afplay` for the siren | the first of `pw-play`, `paplay` and `aplay` on the `PATH`, chosen at start; `siren_player` names another |
 | launchd (`deploy/launchd/`) | systemd --user (`deploy/systemd/cache-siren.service`) |
-| `cache-siren restart` runs `launchctl kickstart` | `cache-siren restart` runs `systemctl --user restart cache-siren` |
+| `bmo-cache-siren restart` runs `launchctl kickstart` | `bmo-cache-siren restart` runs `systemctl --user restart cache-siren` |
 | `voice_cmd` | leave it empty or point it at your own text-to-speech command |
 
-Only the macOS side has been verified by the original author. The Linux replacements are yours to
-check; the core needs no change.
+The overlay app reads the API token from `CACHE_SIREN_TOKEN`, else from the token file in the data
+directory (`CACHE_SIREN_DATA_DIR`, `CACHE_SIREN_TOKEN_FILE`), and loads the page at
+`CACHE_SIREN_ADDRESS` with the token in its fragment.
 
 The launchd files carry two placeholders, replaced when they are installed:
 
-- `@INSTALL_ROOT@`: the folder the siren is installed to, holding `bin/cache-siren`, `web/` and
+- `@INSTALL_ROOT@`: the folder the siren is installed to, holding `bin/bmo-cache-siren`, `web/` and
   `dist/`.
 - `@HOME@`: the user's home folder, where the logs go.
 
@@ -47,50 +47,26 @@ overlay's bundle identifier is `local.cache-siren`. launchctl addresses them in 
 domain, `gui/$(id -u)/<label>`, so no user id is written into any file.
 
 The systemd unit reaches its deploy tree through `%h`, the user's home, so it holds no user name
-either. It runs the deployed release's `bin/cache-siren serve` with the config file kept in the
+either. It runs the deployed release's `bin/bmo-cache-siren serve` with the config file kept in the
 deployment's data root (`testbed.toml`).
-
-## Outside services
-
-### The quota source (`quota_url`)
-
-The header's five-hour and seven-day percentages come from a JSON source you supply. Without one,
-leave `quota_url` empty: the header shows `–` and the token watch and the sirens are unchanged. The
-shape the daemon reads, and the order in which it chooses the slot to show, are in `docs/api.md`
-under the quota source.
-
-- A source that serves several accounts or providers marks the one supplying now; the daemon shows
-  that slot.
-- For a provider with no account login, the provider's own windows go in slot `"1"` with a null
-  account. A provider with no windows shows `–`.
-- The five-hour window is rolling: the percentage rises and falls without a reset. The daemon's own
-  five-hour share is likewise computed over the last five hours.
-- A trap when the source is fed by a status-line script: if every session writes a shared file every
-  second, idle sessions overwrite fresh values with stale ones. Write only when that session's value
-  has changed.
-
-### The heartbeat (`heartbeat_url`)
-
-Posted every 45 seconds to a service registry of your own. Leave it empty and nothing is sent; the
-daemon still writes an alive line to its log every ten minutes, which a log-staleness watcher can use.
 
 ## The least needed on Linux
 
 ```
 cargo build --release
-target/release/cache-siren serve &
-xdg-open http://127.0.0.1:9022/
-target/release/cache-siren tail 20
+target/release/bmo-cache-siren serve &
+xdg-open "$(target/release/bmo-cache-siren page)"
+target/release/bmo-cache-siren tail 20
 ```
 
 `config.json` is created with the defaults on first run. Set `projects_globs` if transcripts live
-anywhere other than `~/.claude/projects`, empty `quota_url` and `heartbeat_url` if you have no such
-services, and set `sound` to false until the siren player is replaced. `docs/configuration.md` lists
-every key.
+anywhere other than `~/.claude/projects`. `docs/configuration.md` lists every key. The daemon writes
+an alive line to its log every ten minutes, which a log-staleness watcher can use.
 
 ## Thresholds
 
 The defaults (yellow at 20K new tokens, red at 100K, a burst at 500K within 60 seconds) come from
 the original author's per-request distribution, where p95 sat near 12K and p99 near 170K.
-Recalibrate them to your own: take the new tokens per request from your transcripts or from
-`events.jsonl`, and set yellow a little above your p95 and red near your p99.
+Recalibrate them to your own: take the new tokens per request from your transcripts, from
+`events.jsonl` or from `bmo-cache-siren stats`, and set yellow a little above your p95 and red near your
+p99; the red line also changes live through `bmo-cache-siren settings --threshold`.

@@ -60,5 +60,6 @@ for(const r of ROWS){
     `<span class="req"><span class="note">${esc(r.note||'')}</span>${esc(r.req||'')}</span>`;
   list.appendChild(el);
 }
-function goLive(){ fetch('/ctl',{method:'POST',body:JSON.stringify({page:'/'})}).catch(()=>{}); }
+// The live page reads the token from the fragment, so going back carries it along.
+function goLive(){ location.href='/'+location.hash; }
 </script></body></html>

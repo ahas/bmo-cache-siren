@@ -1,6 +1,7 @@
 //! Model identifiers: their estimated rates, the backend that bills them, and the readable name every
 //! screen shows.
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// USD per million tokens, estimates.
@@ -34,8 +35,8 @@ pub const RATES: &[(&str, Rates)] = &[
 const UNLISTED_ANTHROPIC: Rates = rates(10.0, 12.5, 0.25);
 const FREE: Rates = rates(0.0, 0.0, 0.0);
 
-/// An event row's `backend`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// A Usage's `backend`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Backend {
   Anthropic,

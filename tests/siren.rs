@@ -1,11 +1,13 @@
-//! The siren's cooldown, mute, player and voice, on a clock the test moves.
+//! The siren's cooldown, arming, player and voice, on a clock the test moves.
 
+use std::ffi::OsString;
 use std::io;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use cache_siren::siren::{Clock, Launcher, Settings, Siren, ensure_siren_wav};
-use cache_siren::{Alert, AlertHook, Kind, Log};
+use cache_siren::paths::home;
+use cache_siren::siren::{Clock, Launcher, Settings, Siren, ensure_siren_wav, host_player, player_argv};
+use cache_siren::{Alert, AlertHook, Config, DataDir, Kind, Log};
 
 #[derive(Default)]
 struct Hand(Mutex<f64>);
@@ -44,7 +46,10 @@ fn cold(sid: &str, force: bool) -> Alert {
     project: "app".into(),
     sid: sid.into(),
     new: 150_000,
+    read: 0,
+    requests: 1,
     note: String::new(),
+    parts: Vec::new(),
     force,
   }
 }
@@ -60,7 +65,8 @@ fn fixture() -> Fixture {
   let dir = tempfile::tempdir().unwrap();
   let settings = Settings {
     sound: true,
-    siren_file: dir.path().join("warning.mp3").to_string_lossy().into_owned(),
+    siren_file: dir.path().join("warning.mp3"),
+    player: vec!["play".into(), "-q".into(), "{file}".into()],
     voice: true,
     voice_cmd: vec!["say".into(), "-v".into(), "{text}".into()],
     cooldown_s: 20.0,
@@ -84,11 +90,11 @@ fn a_session_sounds_once_per_cooldown_and_a_forced_alert_always() {
   let wav = fixture.dir.path().join("siren.wav").to_string_lossy().into_owned();
   fixture.clock.set(1000.0);
 
-  fixture.siren.alert(&cold("s1", false), false);
+  assert_eq!(fixture.siren.alert(&cold("s1", false), true), Some(true));
   let launched = fixture.launched.take();
   assert_eq!(
     launched[0],
-    ["/usr/bin/afplay".to_string(), wav],
+    ["play".to_string(), "-q".into(), wav],
     "no siren file, so the generated sound"
   );
   assert_eq!(
@@ -97,19 +103,56 @@ fn a_session_sounds_once_per_cooldown_and_a_forced_alert_always() {
   );
 
   fixture.clock.set(1019.0);
-  fixture.siren.alert(&cold("s1", false), false);
-  assert!(fixture.launched.take().is_empty(), "inside the cooldown");
-  fixture.siren.alert(&cold("s2", false), false);
+  assert_eq!(fixture.siren.alert(&cold("s1", false), true), None, "inside the cooldown");
+  assert!(fixture.launched.take().is_empty());
+  fixture.siren.alert(&cold("s2", false), true);
   assert_eq!(fixture.launched.take().len(), 2, "another session has its own cooldown");
-  fixture.siren.alert(&cold("s1", true), false);
+  fixture.siren.alert(&cold("s1", true), true);
   assert_eq!(fixture.launched.take().len(), 2, "a forced alert ignores the cooldown");
 
   fixture.clock.set(1040.0);
-  fixture.siren.alert(&cold("s1", false), true);
-  assert!(fixture.launched.take().is_empty(), "muted: logged, not played");
+  assert_eq!(fixture.siren.alert(&cold("s1", false), false), Some(false), "quiet: raised, not played");
+  assert!(fixture.launched.take().is_empty());
   fixture.clock.set(1050.0);
-  fixture.siren.alert(&cold("s1", false), false);
-  assert!(fixture.launched.take().is_empty(), "a muted alert still starts the cooldown");
+  assert_eq!(
+    fixture.siren.alert(&cold("s1", false), true),
+    None,
+    "a quiet alert still starts the cooldown"
+  );
+}
+
+#[test]
+fn a_host_with_no_player_set_takes_its_own() {
+  let dir = tempfile::tempdir().unwrap();
+  assert_eq!(host_player(true, None), ["afplay", "{file}"]);
+  std::fs::write(dir.path().join("paplay"), b"").unwrap();
+  std::fs::write(dir.path().join("aplay"), b"").unwrap();
+  let path = std::env::join_paths([PathBuf::from("/nowhere"), dir.path().to_path_buf()]).unwrap();
+  assert_eq!(host_player(false, Some(path)), ["paplay", "{file}"], "the first of the list found");
+  assert_eq!(
+    host_player(false, Some(OsString::new()))[0],
+    "pw-play",
+    "none found: its failure is logged"
+  );
+
+  assert_eq!(
+    player_argv(&["paplay".into()], "/s.wav"),
+    ["paplay", "/s.wav"],
+    "appended where unmarked"
+  );
+}
+
+#[test]
+fn a_siren_file_under_the_home_folder_is_read_through_its_tilde() {
+  let dir = tempfile::tempdir().unwrap();
+  let config = Config {
+    siren_file: "~/sounds/warning.mp3".into(),
+    siren_player: vec!["play".into()],
+    ..Config::defaults(dir.path())
+  };
+  let settings = Settings::of(&config, &DataDir::new(dir.path()));
+  assert_eq!(settings.siren_file, home().join("sounds/warning.mp3"));
+  assert_eq!(settings.player, ["play"], "a configured player is taken as given");
 }
 
 #[test]
@@ -118,8 +161,8 @@ fn the_siren_file_is_played_when_it_exists_and_the_wav_is_generated_once() {
   let file: PathBuf = fixture.dir.path().join("warning.mp3");
   std::fs::write(&file, b"mp3").unwrap();
 
-  fixture.siren.alert(&cold("s1", false), false);
-  assert_eq!(fixture.launched.take()[0][1], file.to_string_lossy());
+  fixture.siren.alert(&cold("s1", false), true);
+  assert_eq!(fixture.launched.take()[0][2], file.to_string_lossy());
 
   let wav = fixture.dir.path().join("siren.wav");
   let log = Log::new(fixture.dir.path().join("cache-siren.log"), true);

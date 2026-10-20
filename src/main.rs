@@ -1,58 +1,135 @@
-//! The `cache-siren` binary: `serve` runs the daemon (docs/configuration.md, Command line); every other
-//! verb asks the running daemon, on the port `CACHE_SIREN_PORT` names or 9022.
+//! The `bmo-cache-siren` binary: `serve` runs the daemon (docs/configuration.md, Command line), `mcp` its
+//! harness plugin's MCP server, `openapi` prints the contract, and every other verb asks the running daemon
+//! through the client (docs/api.md, The command).
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use cache_siren::cli::{self, Cli as Daemon};
+use cache_siren::cli;
+use cache_siren::client::{DEFAULT_ADDRESS, SirenClient};
 use cache_siren::clocks;
 use cache_siren::paths::default_data_dir;
-use cache_siren::siren::{Settings, Siren, ensure_siren_wav};
-use cache_siren::{App, Config, DataDir, Engine, Log, load_config, router};
+use cache_siren::siren::{Settings as SirenSettings, Siren, ensure_siren_wav};
+use cache_siren::token::{read_or_make_token, read_token};
+use cache_siren::wire::{EventQuery, SettingsPatch, StatsQuery};
+use cache_siren::{App, Config, DataDir, Engine, Log, load_config, mcp, openapi, router};
 use clap::{Args, Parser, Subcommand};
 use serde_json::json;
 
 #[derive(Parser)]
 #[command(
-  name = "cache-siren",
+  name = "bmo-cache-siren",
+  version,
   about = "Live watch of prompt-cache hits and new tokens per request"
 )]
 struct Cli {
+  #[command(flatten)]
+  reach: Reach,
   /// What to do; `status` when none is given.
   #[command(subcommand)]
   command: Option<Verb>,
 }
 
+/// Where the service and its token are.
+#[derive(Args)]
+struct Reach {
+  /// The service's base address.
+  #[arg(long, global = true, env = "CACHE_SIREN_ADDRESS", default_value = DEFAULT_ADDRESS)]
+  address: String,
+  /// The service's bearer token itself.
+  #[arg(long, global = true, env = "CACHE_SIREN_TOKEN", hide_env_values = true)]
+  token: Option<String>,
+  /// The file holding the bearer token [default: token in the data directory]
+  #[arg(long, global = true, env = "CACHE_SIREN_TOKEN_FILE")]
+  token_file: Option<PathBuf>,
+  /// The data directory the daemon writes [default: ~/.claude/cache-siren]
+  #[arg(long, global = true, env = "CACHE_SIREN_DATA_DIR")]
+  data_dir: Option<PathBuf>,
+}
+
+impl Reach {
+  fn data(&self) -> DataDir {
+    DataDir::new(self.data_dir.clone().unwrap_or_else(default_data_dir))
+  }
+
+  fn token_file(&self) -> PathBuf {
+    self.token_file.clone().unwrap_or_else(|| self.data().token())
+  }
+
+  /// The client's token: `--token`, else the token file's content.
+  fn token(&self) -> Result<String, String> {
+    if let Some(token) = &self.token {
+      return Ok(token.clone());
+    }
+    let file = self.token_file();
+    read_token(&file).map_err(|why| format!("the token file {} cannot be read: {why}", file.display()))
+  }
+
+  fn client(&self) -> Result<SirenClient, String> {
+    Ok(SirenClient::new(&self.address, self.token()?))
+  }
+}
+
 #[derive(Subcommand)]
 enum Verb {
-  /// Run the daemon: tail the transcripts, serve the page and the API, sound the siren.
+  /// Run the daemon: tail the transcripts, serve the pages and the API, sound the siren.
   Serve(Serve),
-  /// Whether the daemon is up, with its files, events, newest row and 5-hour quota.
-  Status,
-  /// Show the overlay.
-  Show,
-  /// Hide the overlay.
-  Hide,
-  /// Show the overlay if hidden, else hide it.
-  Toggle,
-  /// Silence the siren and the voice; alerts are still logged.
-  Mute,
-  /// Let the siren and the voice sound again.
-  Unmute,
-  /// Show local-backend rows (`on`) or leave them out (anything else).
-  Local { state: Option<String> },
-  /// Switch the overlay to the frozen demo page.
-  Demo,
-  /// Switch the overlay back to the live page.
-  Live,
-  /// Sound the siren and the voice once.
-  Test,
-  /// The newest rows, local ones included.
-  Tail {
-    #[arg(default_value = "20")]
-    rows: String,
+  /// The health, the settings and the sessions of the window, on one line.
+  Status {
+    #[arg(long)]
+    json: bool,
   },
+  /// The newest events.
+  Tail {
+    #[arg(default_value_t = 20)]
+    events: u32,
+    #[arg(long)]
+    json: bool,
+  },
+  /// Cache hits and new tokens by session.
+  Stats {
+    /// Only events at or after this time, in epoch milliseconds.
+    #[arg(long)]
+    since: Option<i64>,
+    /// Only this session.
+    #[arg(long)]
+    session: Option<String>,
+    #[arg(long)]
+    json: bool,
+  },
+  /// The settings, or a change of the ones given.
+  Settings {
+    #[arg(long)]
+    armed: Option<bool>,
+    #[arg(long)]
+    ttl_ms: Option<u64>,
+    #[arg(long)]
+    threshold: Option<u64>,
+    #[arg(long)]
+    json: bool,
+  },
+  /// Quiet the siren; sirens are still recorded.
+  Mute {
+    #[arg(long)]
+    json: bool,
+  },
+  /// Arm the siren again.
+  Unmute {
+    #[arg(long)]
+    json: bool,
+  },
+  /// Sound the siren and the voice once.
+  Test {
+    #[arg(long)]
+    json: bool,
+  },
+  /// The live page's address with the token in its fragment.
+  Page,
+  /// Run the harness plugin's MCP server on standard input and output.
+  Mcp,
+  /// Print the OpenAPI document.
+  Openapi,
   /// Restart the daemon under the host's service manager.
   Restart,
   /// The last lines of the daemon's log.
@@ -67,9 +144,6 @@ struct Serve {
   /// The config file; created with the defaults when missing [default: config.json in the install root]
   #[arg(long)]
   config: Option<PathBuf>,
-  /// The data directory the siren writes [default: ~/.claude/cache-siren]
-  #[arg(long)]
-  data_dir: Option<PathBuf>,
   /// The directory holding the pages [default: web/ in the install root]
   #[arg(long)]
   web_dir: Option<PathBuf>,
@@ -82,30 +156,115 @@ struct Serve {
 }
 
 fn main() -> ExitCode {
-  let verb = Cli::parse().command.unwrap_or(Verb::Status);
-  let port = std::env::var("CACHE_SIREN_PORT")
-    .ok()
-    .and_then(|port| port.parse().ok())
-    .unwrap_or(9022);
-  let daemon = Daemon::new(port);
+  let cli = Cli::parse();
+  let reach = cli.reach;
+  let verb = cli.command.unwrap_or(Verb::Status { json: false });
+  let client = || reach.client();
+  let settings_patch = |patch: SettingsPatch, json: bool| match client() {
+    Ok(client) => {
+      cli::print(client.change_settings(&patch), json, |settings| vec![cli::settings_line(settings)])
+    }
+    Err(why) => unreached(&why),
+  };
   match verb {
-    Verb::Serve(serve) => {
-      run(serve);
+    Verb::Serve(serve) => run(serve, &reach),
+    Verb::Mcp => mcp_server(&reach),
+    Verb::Openapi => {
+      print!("{}", openapi::openapi_json());
       ExitCode::SUCCESS
     }
-    Verb::Status => daemon.status(),
-    Verb::Show => daemon.show(true),
-    Verb::Hide => daemon.show(false),
-    Verb::Toggle => daemon.toggle(),
-    Verb::Mute => daemon.mute(true),
-    Verb::Unmute => daemon.mute(false),
-    Verb::Local { state } => daemon.local(state.as_deref() == Some("on")),
-    Verb::Demo => daemon.demo(),
-    Verb::Live => daemon.live(),
-    Verb::Test => daemon.test(),
-    Verb::Tail { rows } => daemon.tail(&rows),
+    Verb::Page => match reach.token() {
+      Ok(token) => {
+        println!("{}", cli::page_address(&reach.address, &token));
+        ExitCode::SUCCESS
+      }
+      Err(why) => unreached(&why),
+    },
     Verb::Restart => cli::restart(),
-    Verb::Log { lines } => cli::log_tail(&DataDir::new(default_data_dir()).log(), lines),
+    Verb::Log { lines } => cli::log_tail(&reach.data().log(), lines),
+    Verb::Settings {
+      armed,
+      ttl_ms,
+      threshold,
+      json,
+    } if armed.is_some() || ttl_ms.is_some() || threshold.is_some() => settings_patch(
+      SettingsPatch {
+        armed,
+        ttl_ms,
+        threshold,
+      },
+      json,
+    ),
+    Verb::Mute { json } => settings_patch(
+      SettingsPatch {
+        armed: Some(false),
+        ..SettingsPatch::default()
+      },
+      json,
+    ),
+    Verb::Unmute { json } => settings_patch(
+      SettingsPatch {
+        armed: Some(true),
+        ..SettingsPatch::default()
+      },
+      json,
+    ),
+    verb => {
+      let client = match client() {
+        Ok(client) => client,
+        Err(why) => return unreached(&why),
+      };
+      match verb {
+        Verb::Status { json } => cli::status(&client, json),
+        Verb::Tail { events, json } => cli::print(
+          client.events(&EventQuery {
+            limit: Some(events),
+            ..EventQuery::default()
+          }),
+          json,
+          cli::tail_lines,
+        ),
+        Verb::Stats {
+          since,
+          session,
+          json,
+        } => cli::print(
+          client.stats(&StatsQuery {
+            since,
+            session_id: session,
+          }),
+          json,
+          cli::stats_lines,
+        ),
+        Verb::Settings { json, .. } => {
+          cli::print(client.settings(), json, |settings| vec![cli::settings_line(settings)])
+        }
+        Verb::Test { json } => cli::print(client.create_siren_test(), json, |test| {
+          vec![if test.sounded { "sounded".into() } else { "raised, but quiet".into() }]
+        }),
+        _ => unreachable!("every other verb is answered above"),
+      }
+    }
+  }
+}
+
+fn unreached(why: &str) -> ExitCode {
+  eprintln!("bmo-cache-siren: {why}");
+  ExitCode::FAILURE
+}
+
+fn mcp_server(reach: &Reach) -> ExitCode {
+  let client = match reach.client() {
+    Ok(client) => client,
+    Err(why) => return unreached(&why),
+  };
+  let runtime = match tokio::runtime::Runtime::new() {
+    Ok(runtime) => runtime,
+    Err(why) => return unreached(&format!("no runtime: {why}")),
+  };
+  match runtime.block_on(mcp::serve(client)) {
+    Ok(()) => ExitCode::SUCCESS,
+    Err(why) => unreached(&format!("the MCP server stopped: {why}")),
   }
 }
 
@@ -121,25 +280,31 @@ fn install_root() -> PathBuf {
     .unwrap_or_else(|| PathBuf::from("."))
 }
 
-fn run(serve: Serve) {
+fn run(serve: Serve, reach: &Reach) -> ExitCode {
   let root = install_root();
-  let data = DataDir::new(serve.data_dir.unwrap_or_else(default_data_dir));
+  let data = reach.data();
   if let Err(why) = std::fs::create_dir_all(data.root()) {
-    eprintln!("cache-siren: the data directory {} cannot be made: {why}", data.root().display());
-    std::process::exit(1);
+    return unreached(&format!("the data directory {} cannot be made: {why}", data.root().display()));
   }
+  let token_file = reach.token_file();
+  let token = match read_or_make_token(&token_file) {
+    Ok(token) => token,
+    Err(why) => {
+      return unreached(&format!("the token file {} cannot be read or made: {why}", token_file.display()));
+    }
+  };
   let log = Arc::new(Log::new(data.log(), serve.quiet));
   let config_path = serve.config.unwrap_or_else(|| root.join("config.json"));
   let config = load_config(&config_path, Config::defaults(data.root()), &log);
   log.info(
     "start",
-    json!({"pid": std::process::id(), "port": config.port,
+    json!({"pid": std::process::id(), "port": config.port, "version": env!("CARGO_PKG_VERSION"),
            "cfg": {"yellow_new_tokens": config.yellow_new_tokens, "red_new_tokens": config.red_new_tokens,
                    "burst_red_tokens": config.burst_red_tokens, "poll_s": config.poll_s}}),
   );
   ensure_siren_wav(&data.siren_wav(), &log);
 
-  let siren = Arc::new(Siren::on_host(Settings::of(&config, &data), log.clone()));
+  let siren = Arc::new(Siren::on_host(SirenSettings::of(&config, &data), log.clone()));
   let port = config.port;
   let engine = Arc::new(Engine::new(config, data, log.clone(), siren));
   if serve.no_backfill {
@@ -147,10 +312,9 @@ fn run(serve: Serve) {
   } else {
     engine.backfill();
   }
-  engine.seed_buckets();
 
   let web_dir = serve.web_dir.unwrap_or_else(|| root.join("web"));
-  let app = Arc::new(App::new(engine.clone(), web_dir, Some(config_path)));
+  let app = Arc::new(App::new(engine.clone(), web_dir, Some(config_path), token));
   let runtime = tokio::runtime::Runtime::new().expect("a runtime");
   let served = runtime.block_on(async {
     clocks::start(engine.clone());
@@ -160,10 +324,13 @@ fn run(serve: Serve) {
   });
   engine.save();
   match served {
-    Ok(()) => log.info("stop", json!({})),
+    Ok(()) => {
+      log.info("stop", json!({}));
+      ExitCode::SUCCESS
+    }
     Err(why) => {
       log.error("serve failed", json!({"err": why.to_string()}));
-      std::process::exit(1);
+      ExitCode::FAILURE
     }
   }
 }

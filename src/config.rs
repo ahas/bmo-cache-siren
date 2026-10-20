@@ -1,7 +1,7 @@
 //! The configuration (docs/configuration.md): one JSON file read once at start over the defaults, and
-//! the two TTL keys that `POST /ttl` changes live and merges back into that file (docs/api.md).
+//! the three keys behind the settings that `PATCH /settings` changes live and merges back into that file
+//! (docs/api.md, Settings).
 
-use std::fmt;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -13,12 +13,10 @@ use serde_json::{Map, Number, Value, json};
 use crate::attribution::{Cause, Request, attribute};
 use crate::log::Log;
 use crate::paths::default_data_dir;
+use crate::wire::{Settings, SettingsPatch};
 
-/// Per mode, a model prefix or `*` and the cache lifetime in seconds.
+/// Per harness, a model prefix or `*` and the cache lifetime in seconds.
 pub type TtlTable = IndexMap<String, IndexMap<String, Number>>;
-
-/// The two keys that change while the daemon runs.
-pub const TTL_KEYS: [&str; 2] = ["ttl_s", "ttl_by_mode_model_s"];
 
 /// Every key the daemon reads, in the order the created file lists them, and any key the file adds,
 /// carried but unused.
@@ -39,6 +37,7 @@ pub struct Config {
   pub burst_red_tokens: u64,
   #[serde(serialize_with = "whole")]
   pub siren_cooldown_s: f64,
+  pub armed: bool,
   pub ttl_s: Number,
   pub ttl_by_mode_model_s: TtlTable,
   pub prefix_reuse_min: f64,
@@ -46,14 +45,12 @@ pub struct Config {
   pub voice_cmd: Vec<String>,
   pub sound: bool,
   pub siren_file: String,
-  pub quota_url: String,
-  pub heartbeat_url: String,
+  pub siren_player: Vec<String>,
   pub ring: usize,
   #[serde(serialize_with = "whole")]
   pub retention_days: f64,
   #[serde(serialize_with = "whole")]
   pub prune_every_s: f64,
-  pub node: String,
   #[serde(flatten)]
   pub extra: Map<String, Value>,
 }
@@ -86,6 +83,7 @@ impl Config {
       burst_window_s: 60.0,
       burst_red_tokens: 500_000,
       siren_cooldown_s: 20.0,
+      armed: true,
       ttl_s: Number::from(3600),
       ttl_by_mode_model_s,
       prefix_reuse_min: 0.5,
@@ -93,19 +91,17 @@ impl Config {
       voice_cmd: Vec::new(),
       sound: true,
       siren_file: data_dir.join("warning.mp3").to_string_lossy().into_owned(),
-      quota_url: "http://localhost:9200/api/claude".into(),
-      heartbeat_url: String::new(),
+      siren_player: Vec::new(),
       ring: 600,
       retention_days: 7.0,
       prune_every_s: 21_600.0,
-      node: String::new(),
       extra: Map::new(),
     }
   }
 
-  /// The cache lifetime in seconds of one request: within its mode's table the longest model prefix,
-  /// else that mode's `*`; none for a listed mode with neither, since its provider has no uniform cache
-  /// contract; `ttl_s` for a mode the table does not list.
+  /// The cache lifetime in seconds of one request: within its harness's table the longest model prefix,
+  /// else that harness's `*`; none for a listed harness with neither, since its provider has no uniform
+  /// cache contract; `ttl_s` for a harness the table does not list.
   pub fn ttl_for(&self, mode: &str, model: &str) -> Option<f64> {
     let Some(rows) = self.ttl_by_mode_model_s.get(mode) else {
       return self.ttl_s.as_f64();
@@ -130,9 +126,43 @@ impl Config {
     attribute(request, self.ttl_for(request.mode, request.model), self.prefix_reuse_min)
   }
 
-  /// The two TTL keys as now held, as `GET /ttl` answers them.
-  pub fn ttl(&self) -> Value {
-    json!({"ttl_s": self.ttl_s, "ttl_by_mode_model_s": self.ttl_by_mode_model_s})
+  /// The settings as now held (docs/api.md, Settings).
+  pub fn settings(&self) -> Settings {
+    let ttl_s = self.ttl_s.as_f64().unwrap_or(0.0);
+    Settings {
+      armed: self.armed,
+      ttl_ms: (ttl_s * 1000.0).round().max(0.0) as u64,
+      threshold: self.red_new_tokens,
+    }
+  }
+
+  /// Apply a checked settings patch; the config keys it changed, with their new values, as they are
+  /// merged into the config file.
+  pub fn apply(&mut self, patch: &SettingsPatch) -> Map<String, Value> {
+    let before = self.settings();
+    let mut changed = Map::new();
+    if let Some(armed) = patch.armed.filter(|&armed| armed != before.armed) {
+      self.armed = armed;
+      changed.insert("armed".into(), json!(armed));
+    }
+    if let Some(ttl_ms) = patch.ttl_ms.filter(|&ttl_ms| ttl_ms != before.ttl_ms) {
+      self.ttl_s = seconds_of(ttl_ms);
+      changed.insert("ttl_s".into(), Value::Number(self.ttl_s.clone()));
+    }
+    if let Some(threshold) = patch.threshold.filter(|&threshold| threshold != before.threshold) {
+      self.red_new_tokens = threshold;
+      changed.insert("red_new_tokens".into(), json!(threshold));
+    }
+    changed
+  }
+}
+
+/// Milliseconds as the config file's seconds: an integer where they are whole.
+fn seconds_of(ms: u64) -> Number {
+  if ms.is_multiple_of(1000) {
+    Number::from(ms / 1000)
+  } else {
+    Number::from_f64(ms as f64 / 1000.0).unwrap_or_else(|| Number::from(ms / 1000))
   }
 }
 
@@ -231,124 +261,4 @@ fn final_target(path: &Path) -> PathBuf {
     };
   }
   current
-}
-
-/// Why a TTL body was refused; `code` is the English error the caller gets.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TtlError {
-  BodyNotJson,
-  BodyNotObject,
-  UnknownField,
-  NothingToSet,
-  TtlSNotPositiveInteger,
-  TtlTableNotObject,
-  TtlTableModeInvalid,
-  TtlTableModelInvalid,
-  TtlTableSecondsNotPositiveInteger,
-}
-
-impl TtlError {
-  pub fn code(self) -> &'static str {
-    match self {
-      TtlError::BodyNotJson => "body_not_json",
-      TtlError::BodyNotObject => "body_not_object",
-      TtlError::UnknownField => "unknown_field",
-      TtlError::NothingToSet => "nothing_to_set",
-      TtlError::TtlSNotPositiveInteger => "ttl_s_not_positive_integer",
-      TtlError::TtlTableNotObject => "ttl_table_not_object",
-      TtlError::TtlTableModeInvalid => "ttl_table_mode_invalid",
-      TtlError::TtlTableModelInvalid => "ttl_table_model_invalid",
-      TtlError::TtlTableSecondsNotPositiveInteger => "ttl_table_seconds_not_positive_integer",
-    }
-  }
-}
-
-impl fmt::Display for TtlError {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    f.write_str(self.code())
-  }
-}
-
-impl std::error::Error for TtlError {}
-
-/// A checked TTL body: the keys it gives, each to replace that key whole.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct TtlUpdate {
-  pub ttl_s: Option<Number>,
-  pub ttl_by_mode_model_s: Option<TtlTable>,
-}
-
-impl TtlUpdate {
-  /// Replace in `config` each key this update gives.
-  pub fn apply(&self, config: &mut Config) {
-    if let Some(ttl_s) = &self.ttl_s {
-      config.ttl_s = ttl_s.clone();
-    }
-    if let Some(table) = &self.ttl_by_mode_model_s {
-      config.ttl_by_mode_model_s = table.clone();
-    }
-  }
-
-  /// The keys this update gives, as they are merged into the config file.
-  pub fn to_map(&self) -> Map<String, Value> {
-    let mut map = Map::new();
-    if let Some(ttl_s) = &self.ttl_s {
-      map.insert("ttl_s".into(), Value::Number(ttl_s.clone()));
-    }
-    if let Some(table) = &self.ttl_by_mode_model_s {
-      map.insert("ttl_by_mode_model_s".into(), json!(table));
-    }
-    map
-  }
-}
-
-/// Check a TTL body: an object with one or both TTL keys, `ttl_s` a positive integer of seconds and the
-/// table a `{mode: {model prefix or "*": seconds}}` object with non-empty keys and positive integer
-/// seconds. An empty mode table is allowed: that provider has no uniform cache contract.
-pub fn ttl_body(body: &Value) -> Result<TtlUpdate, TtlError> {
-  let Value::Object(body) = body else {
-    return Err(TtlError::BodyNotObject);
-  };
-  if body.keys().any(|key| !TTL_KEYS.contains(&key.as_str())) {
-    return Err(TtlError::UnknownField);
-  }
-  if body.is_empty() {
-    return Err(TtlError::NothingToSet);
-  }
-  let mut update = TtlUpdate::default();
-  if let Some(ttl_s) = body.get("ttl_s") {
-    update.ttl_s = Some(positive_integer(ttl_s).ok_or(TtlError::TtlSNotPositiveInteger)?);
-  }
-  if let Some(table) = body.get("ttl_by_mode_model_s") {
-    let Value::Object(table) = table else {
-      return Err(TtlError::TtlTableNotObject);
-    };
-    let mut checked = TtlTable::new();
-    for (mode, rows) in table {
-      let Value::Object(rows) = rows else {
-        return Err(TtlError::TtlTableModeInvalid);
-      };
-      if mode.is_empty() {
-        return Err(TtlError::TtlTableModeInvalid);
-      }
-      let mut lifetimes = IndexMap::new();
-      for (prefix, seconds) in rows {
-        if prefix.is_empty() {
-          return Err(TtlError::TtlTableModelInvalid);
-        }
-        lifetimes.insert(
-          prefix.clone(),
-          positive_integer(seconds).ok_or(TtlError::TtlTableSecondsNotPositiveInteger)?,
-        );
-      }
-      checked.insert(mode.clone(), lifetimes);
-    }
-    update.ttl_by_mode_model_s = Some(checked);
-  }
-  Ok(update)
-}
-
-/// An integer above zero: never a boolean, a fraction or a negative.
-fn positive_integer(value: &Value) -> Option<Number> {
-  value.as_u64().filter(|&n| n > 0).map(Number::from)
 }

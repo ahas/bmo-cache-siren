@@ -14,18 +14,11 @@ body.alarm{animation:flash .5s ease-in-out 5}
 #spark i{display:block;width:5px;background:var(--blue);min-height:1px;border-radius:1px}
 #spark i.y{background:var(--yellow)}#spark i.r{background:var(--red)}
 #hdr .sp{flex:1}
-#budget{display:flex;align-items:center;gap:7px;padding:3px 8px;border-bottom:1px solid var(--line);background:#0f141a}
-#budget .lbl{color:var(--dim);white-space:nowrap}
-#budget .lbl b{color:var(--fg)}
-#bar{flex:1;height:12px;border-radius:3px;overflow:hidden;display:flex;background:#161b22;border:1px solid #21262d}
-#bar .seg{height:100%;min-width:1px}
-#bar .head{height:100%;flex:1;background:repeating-linear-gradient(45deg,#12161c,#12161c 4px,#0f141a 4px,#0f141a 8px)}
-#budget .leg{display:flex;gap:8px;overflow:hidden;white-space:nowrap;max-width:46%}
-#budget .leg span{color:var(--dim)}#budget .leg i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:3px;vertical-align:middle}
 #hdr button{background:#21262d;color:var(--fg);border:1px solid #30363d;border-radius:4px;font:inherit;padding:1px 6px;cursor:pointer}
 #hdr button.on{background:#264f78;border-color:var(--blue)}
 #hdr button.mute{padding:1px 4px;line-height:0}
 #hdr button.mute img{height:16px;width:16px;vertical-align:middle;display:block}
+#hdr button.mute span{line-height:1.35}
 #hdr button.mute.on{background:#3a1414;border-color:var(--red)}
 #list{overflow-y:auto;height:calc(100% - 30px)}
 .row{display:grid;grid-template-columns:58px 118px 66px 62px 70px 62px 1fr;gap:6px;padding:2px 8px;border-bottom:1px solid #161b22;white-space:nowrap;overflow:hidden;cursor:default}
@@ -56,94 +49,106 @@ body.alarm{animation:flash .5s ease-in-out 5}
 </style></head><body>
 <div id="hdr">
   <span class="t">cache-siren</span>
-  <span class="q" id="q5">5h <b>–</b></span>
-  <span class="q" id="q7">7d <b>–</b></span>
   <span class="q" id="rate">60s <b>0</b></span>
   <span id="spark"></span>
   <span class="q" id="sess"><b>0</b> sess</span>
   <span class="sp"></span>
   <button id="bLocal" title="show local sessions">local</button>
-  <button id="bMute" class="mute" title="siren and voice on/off"><img id="muteImg" src="/asset/siren_on.png" alt="siren"></button>
-  <button id="bHide" title="hide (back with cache-siren show)">—</button>
-</div>
-<div id="budget" title="5-hour quota budget: filled = % used so far, coloured by session share, hatched = headroom left (estimate)">
-  <span class="lbl">5h <b id="bUsed">–</b> used</span>
-  <div id="bar"></div>
-  <span class="leg" id="bLeg"></span>
+  <button id="bMute" class="mute" title="siren and voice on/off"><img id="muteImg" src="/asset/siren_on.png" alt="siren"><span id="muteGlyph" hidden>siren</span></button>
+  <button id="bHide" title="hide (back with bmo-cache-siren restart)">—</button>
 </div>
 <div id="list"><div id="empty">waiting for events…</div></div>
 <script>
+// The API takes the token the address's fragment carries (bmo-cache-siren page prints it); the tab keeps it,
+// and the address bar lets go of it.
 const $=s=>document.querySelector(s);
-const list=$('#list'); let showLocal=false, muted=false, lastSeq=0, es=null, rows=new Map();
+const TOKEN_KEY='cache-siren-token', LOCAL_KEY='cache-siren-local';
+const given=new URLSearchParams(location.hash.slice(1)).get('access_token');
+if(given){sessionStorage.setItem(TOKEN_KEY,given);history.replaceState(null,'',location.pathname);}
+const TOKEN=sessionStorage.getItem(TOKEN_KEY)||'';
+const list=$('#list'); const rows=new Map(); let held=[];
+let showLocal=localStorage.getItem(LOCAL_KEY)==='1', armed=true, threshold=100000, lastId=0, es=null, images=true;
 const fmt=n=>n>=1e6?(n/1e6).toFixed(2)+'M':n>=1000?(n/1000).toFixed(n>=100000?0:1)+'K':String(n);
-function ctl(patch){return fetch('/ctl',{method:'POST',body:JSON.stringify(patch)}).then(r=>r.json()).then(applyCtl).catch(()=>{});}
-function applyCtl(c){muted=!!c.muted;showLocal=!!c.show_local;$('#bMute').classList.toggle('on',muted);$('#muteImg').src=muted?'/asset/siren_off.png':'/asset/siren_on.png';$('#bLocal').classList.toggle('on',showLocal);
-  for(const [seq,el] of rows){el.style.display=(el.classList.contains('local')&&!showLocal)?'none':'';}}
-$('#bMute').onclick=()=>ctl({muted:!muted});
-$('#bLocal').onclick=()=>ctl({show_local:!showLocal});
-$('#bHide').onclick=()=>{ctl({visible:false}); try{window.webkit.messageHandlers.ctl.postMessage('hide')}catch(e){}};
-function render(e){
-  if(rows.has(e.seq))return; const el=document.createElement('div');
-  el.className='row lv-'+e.level+(e.backend==='local'?' local':'')+' new-in';
-  if(e.backend==='local'&&!showLocal)el.style.display='none';
-  const lvl=e.new>=STATS.cfg_red?'r':e.new>=STATS.cfg_yellow?'y':'';
-  const sess=`${e.project||''}${e.agent?'<span class="ag"> ⤷agent</span>':''} <span class="sid">${e.session||''}</span>`;
-  el.innerHTML=`<span class="ts">${e.ts_kst||''}</span><span class="sess" title="${e.sid||''}">${sess}</span><span class="m">${e.m||''}</span>`+
-    `<span class="k ${e.kind}">${e.kind}</span><span class="new ${lvl}">${e.new?'+'+fmt(e.new):''}</span><span class="rd">${e.read?fmt(e.read):''}</span>`+
-    `<span class="req">${e.note?'<span class="note">'+esc(e.note)+'</span>':''}${esc(e.req||'')}</span>`;
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const clock=at=>new Date(at).toTimeString().slice(0,8);
+function api(path,options={}){
+  const headers={'Authorization':'Bearer '+TOKEN,'Accept':'application/json','Content-Type':'application/json'};
+  return fetch(path,{...options,headers}).then(r=>r.ok?r.json():Promise.reject(new Error(String(r.status))));
+}
+function muteFace(){
+  $('#bMute').classList.toggle('on',!armed);
+  $('#muteGlyph').textContent=armed?'siren':'quiet';
+  $('#muteImg').hidden=!images; $('#muteGlyph').hidden=images;
+  if(images)$('#muteImg').src=armed?'/asset/siren_on.png':'/asset/siren_off.png';
+}
+$('#muteImg').onerror=()=>{images=false;muteFace();};
+function applySettings(s){armed=s.armed;threshold=s.threshold;muteFace();}
+function applyLocal(){$('#bLocal').classList.toggle('on',showLocal);
+  for(const el of rows.values()){el.style.display=(el.classList.contains('local')&&!showLocal)?'none':'';}}
+$('#bMute').onclick=()=>api('/settings',{method:'PATCH',body:JSON.stringify({armed:!armed})}).then(applySettings).catch(()=>{});
+$('#bLocal').onclick=()=>{showLocal=!showLocal;localStorage.setItem(LOCAL_KEY,showLocal?'1':'0');applyLocal();};
+$('#bHide').onclick=()=>{try{window.webkit.messageHandlers.overlay.postMessage('hide')}catch(e){}};
+function add(id,el,local){
+  el.className+=(local?' local':'')+' new-in'; el.dataset.id=id;
+  if(local&&!showLocal)el.style.display='none';
+  rows.set(id,el); $('#empty')?.remove(); list.insertBefore(el,list.firstChild);
+  while(list.children.length>150){const last=list.lastChild; rows.delete(+last.dataset.id); last.remove();}
+}
+function usageRow(id,u){
+  const el=document.createElement('div'); el.className='row lv-'+u.level;
+  const lvl=u.level==='red'?'r':u.level==='yellow'?'y':'';
+  const sess=`${esc(u.projectName)}${u.subagent?'<span class="ag"> ⤷agent</span>':''} <span class="sid">${esc(u.sessionId.slice(0,8))}</span>`;
+  el.innerHTML=`<span class="ts">${clock(u.at)}</span><span class="sess" title="${esc(u.sessionId)}">${sess}</span><span class="m">${esc(u.modelLabel)}</span>`+
+    `<span class="k ${u.kind}">${u.kind}</span><span class="new ${lvl}">${u.newTokenCount?'+'+fmt(u.newTokenCount):''}</span><span class="rd">${u.cachedTokenCount?fmt(u.cachedTokenCount):''}</span>`+
+    `<span class="req">${u.note?'<span class="note">'+esc(u.note)+'</span>':''}${esc(u.requestLabel)}</span>`;
   el.onclick=()=>{const d=el.querySelector('.det'); if(d){d.remove();return;} const x=document.createElement('div');x.className='det';
-    let qtxt='';
-    if(e.backend==='anthropic'&&STATS.rate&&e.new){qtxt=` · ≈${(e.new/1e6*STATS.rate).toFixed(2)}% of 5h (estimate)`;}
-    else if(e.backend==='local'){qtxt=' · local (not billed)';}
-    x.textContent=`sid ${e.sid||''} cwd ${e.cwd||''} model ${e.model||''} input ${e.input||0} cache_write ${e.cc||0} cache_read ${e.read||0} out ${e.out||0} ctx ${e.ctx||0} prev_ctx ${e.prev_ctx||0} gap ${e.gap_s??'-'}s${qtxt}`;el.appendChild(x);};
-  rows.set(e.seq,el); $('#empty')?.remove();
-  list.insertBefore(el,list.firstChild);
-  while(list.children.length>150){const last=list.lastChild; rows.delete(+last.dataset.seq); last.remove();}
-  el.dataset.seq=e.seq; lastSeq=Math.max(lastSeq,e.seq);
-  if(e.level==='red'&&e.backend!=='local'){document.body.classList.remove('alarm');void document.body.offsetWidth;document.body.classList.add('alarm');}
+    const billed=u.backend==='local'?' · local (not billed)':u.costUsd?` · ≈$${u.costUsd}`:'';
+    const gap=u.gapMs==null?'-':Math.round(u.gapMs/1000);
+    x.textContent=`session ${u.sessionId} dir ${u.directoryName} harness ${u.harnessName} model ${u.modelName} input ${u.inputTokenCount} cache_write ${u.cacheWriteTokenCount} cache_read ${u.cachedTokenCount} out ${u.outputTokenCount} ctx ${u.contextTokenCount} prev_ctx ${u.previousContextTokenCount} gap ${gap}s${billed}`;
+    el.appendChild(x);};
+  add(id,el,u.backend==='local');
 }
-function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
-function hue(str){let h=0;for(let i=0;i<str.length;i++)h=(h*31+str.charCodeAt(i))%360;return h;}
-function segColor(p){return `hsl(${hue(p)},58%,52%)`;}
-function renderBudget(b){
-  const used=b&&b.used_pct; $('#bUsed').textContent=used==null?'–':Math.round(used)+'%';
-  const bar=$('#bar'), leg=$('#bLeg'); bar.innerHTML=''; leg.innerHTML='';
-  if(!b||used==null){bar.innerHTML='<div class="head"></div>';return;}
-  const segs=(b.segments||[]).filter(s=>s.pct>=0.1);
-  for(const s of segs){
-    const d=document.createElement('div');d.className='seg';d.style.width=s.pct+'%';d.style.background=segColor(s.project);
-    d.title=`${s.project} — ${s.pct}% of 5h (estimate)`;bar.appendChild(d);
-  }
-  const head=document.createElement('div');head.className='head';head.title=`headroom left ${b.headroom_pct}%`;bar.appendChild(head);
-  segs.slice(0,4).forEach(s=>{const sp=document.createElement('span');sp.innerHTML=`<i style="background:${segColor(s.project)}"></i>${esc(s.project)} ${s.pct}%`;leg.appendChild(sp);});
+function burstRow(id,s){
+  const el=document.createElement('div'); el.className='row lv-red';
+  el.innerHTML=`<span class="ts">${clock(s.at)}</span><span class="sess" title="${esc(s.parts.map(p=>p.projectName+' '+fmt(p.newTokenCount)).join(', '))}">${esc(s.projectName)}</span><span class="m"></span>`+
+    `<span class="k burst">burst</span><span class="new r">+${fmt(s.newTokenCount)}</span><span class="rd">${s.cachedTokenCount?fmt(s.cachedTokenCount):''}</span>`+
+    `<span class="req"><span class="note">${esc(s.note)}</span></span>`;
+  add(id,el,false);
 }
-let STATS={cfg_red:100000,cfg_yellow:20000,rate:null};
-function stats(s){STATS.cfg_red=s.cfg.red_new_tokens;STATS.cfg_yellow=s.cfg.yellow_new_tokens;
-  const q=s.quota||{}; STATS.rate=q.pct_per_mtok||null;
-  const v=q.five_h; const el=$('#q5'); let rs='';
-  if(q.five_h_resets){const d=new Date(q.five_h_resets*1000);rs=' ↻'+d.toTimeString().slice(0,5);}
-  el.innerHTML=`5h <b>${v==null?'–':Math.round(v)+'%'}</b>${rs}`; el.className='q'+(v>=85?' bad':v>=60?' warn':'');
-  const w=q.seven_d; const e7=$('#q7'); let wr='';
-  if(q.seven_d_resets){const rem=q.seven_d_resets*1000-Date.now(); if(rem>0){const h=Math.floor(rem/3600000); wr=' <span style="color:var(--dim)">'+Math.floor(h/24)+'d'+(h%24)+'h</span>';}}
-  e7.innerHTML=`7d <b>${w==null?'–':Math.round(w)+'%'}</b>${wr}`; e7.className='q'+(w>=85?' bad':w>=60?' warn':'');
-  const rlabel=STATS.rate?` · ${STATS.rate}%/Mtok`:'';
-  $('#rate').innerHTML=`60s <b>${fmt(s.new_60s||0)}</b><span style="color:var(--dim)">${rlabel}</span>`;
-  renderBudget(q.budget);
-  $('#sess').innerHTML=`<b>${s.sessions_30m||0}</b> sess`;
-  const sp=$('#spark'); sp.innerHTML=''; const mx=Math.max(1,...s.per_min);
-  s.per_min.forEach(v=>{const i=document.createElement('i');i.style.height=Math.max(1,Math.round(15*v/mx))+'px';i.title=fmt(v);if(v>=STATS.cfg_red*3)i.className='r';else if(v>=STATS.cfg_red)i.className='y';sp.appendChild(i);});
-  if(s.ctl)applyCtl(s.ctl);
+function alarm(){document.body.classList.remove('alarm');void document.body.offsetWidth;document.body.classList.add('alarm');}
+function handle(event,live){
+  // Events come oldest first, and a page read again holds the ones already shown.
+  if(event.id<=lastId)return; lastId=event.id;
+  if(event.kind==='usage.created'){usageRow(event.id,event.data);held.push(event.data);}
+  else if(event.kind==='siren.sounded'){if(event.data.kind==='burst')burstRow(event.id,event.data); if(live)alarm();}
+  else if(event.kind==='settings.changed'){applySettings(event.data);}
+}
+// The header is summed from the Usages held: new tokens per minute over ten minutes, the last minute's, and
+// the sessions of the last half hour; local rows bill nothing and are left out.
+function header(){
+  const now=Date.now(); held=held.filter(u=>now-u.at<1800000);
+  const billed=held.filter(u=>u.backend!=='local'), perMin=new Array(10).fill(0); let last=0; const live=new Set();
+  for(const u of billed){const age=now-u.at; live.add(u.sessionId);
+    if(u.newTokenCount&&age>=0&&age<600000)perMin[9-Math.floor(age/60000)]+=u.newTokenCount;
+    if(u.newTokenCount&&age<60000)last+=u.newTokenCount;}
+  $('#rate').innerHTML=`60s <b>${fmt(last)}</b>`; $('#sess').innerHTML=`<b>${live.size}</b> sess`;
+  const sp=$('#spark'); sp.innerHTML=''; const mx=Math.max(1,...perMin);
+  perMin.forEach(v=>{const i=document.createElement('i');i.style.height=Math.max(1,Math.round(15*v/mx))+'px';i.title=fmt(v);
+    if(v>=threshold*3)i.className='r';else if(v>=threshold)i.className='y';sp.appendChild(i);});
 }
 async function boot(){
-  try{const r=await fetch('/events?limit=120&local=1');const j=await r.json(); j.events.forEach(render);}catch(e){}
-  try{stats(await (await fetch('/stats')).json());}catch(e){}
-  connect();
+  if(es){es.close();es=null;}
+  if(!TOKEN){$('#empty').textContent='open the address bmo-cache-siren page prints';return;}
+  try{applySettings(await api('/settings'));}catch(e){}
+  try{const page=await api('/events?limit=300'); page.items.forEach(event=>handle(event,false));}catch(e){setTimeout(boot,2000);return;}
+  applyLocal(); header(); connect();
 }
 function connect(){
-  if(es)es.close(); es=new EventSource('/stream?since='+lastSeq);
-  es.addEventListener('ev',m=>render(JSON.parse(m.data)));
-  es.addEventListener('stats',m=>stats(JSON.parse(m.data)));
-  es.onerror=()=>{es.close();setTimeout(connect,2000);};
+  es=new EventSource('/events?after='+lastId+'&access_token='+encodeURIComponent(TOKEN));
+  for(const kind of ['usage.created','siren.sounded','settings.changed'])es.addEventListener(kind,m=>handle(JSON.parse(m.data),true));
+  // A stream that broke may have missed events past the window, so the page is read again before it resumes.
+  es.onerror=()=>{es.close();es=null;setTimeout(boot,2000);};
 }
+setInterval(header,2000);
 boot();
 </script></body></html>

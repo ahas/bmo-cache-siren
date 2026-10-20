@@ -1,7 +1,8 @@
 //! The siren (docs/api.md, Voice and sound): a red alert outside its session's cooldown is logged and,
-//! unless the overlay is muted, played and spoken.
+//! when the siren is armed, played and spoken.
 
 use std::collections::HashMap;
+use std::ffi::OsString;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -16,9 +17,12 @@ use crate::data_dir::DataDir;
 use crate::engine::{Alert, AlertHook};
 use crate::event::thousands;
 use crate::log::Log;
+use crate::paths::expand_tilde;
 
-/// The player the siren sound is handed to.
-const PLAYER: &str = "/usr/bin/afplay";
+/// The players looked for on the `PATH` of a host other than macOS, in this order.
+const PLAYERS: [&str; 3] = ["pw-play", "paplay", "aplay"];
+/// What a player's argument list holds where the sound's path goes.
+const FILE_MARK: &str = "{file}";
 
 /// What tells the siren the time, in Unix seconds.
 pub trait Clock: Send + Sync {
@@ -62,7 +66,10 @@ impl Launcher for ChildLauncher {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Settings {
   pub sound: bool,
-  pub siren_file: String,
+  /// The sound to play where it exists, its `~` already read as the home folder.
+  pub siren_file: PathBuf,
+  /// The argument list that plays a sound; empty where the host has no player.
+  pub player: Vec<String>,
   pub voice: bool,
   pub voice_cmd: Vec<String>,
   pub cooldown_s: f64,
@@ -74,7 +81,12 @@ impl Settings {
   pub fn of(config: &Config, data: &DataDir) -> Settings {
     Settings {
       sound: config.sound,
-      siren_file: config.siren_file.clone(),
+      siren_file: expand_tilde(&config.siren_file),
+      player: if config.siren_player.is_empty() {
+        host_player(cfg!(target_os = "macos"), std::env::var_os("PATH"))
+      } else {
+        config.siren_player.clone()
+      },
       voice: config.voice,
       voice_cmd: config.voice_cmd.clone(),
       cooldown_s: config.siren_cooldown_s,
@@ -129,14 +141,16 @@ impl Siren {
 
   fn play(&self) {
     let file = &self.settings.siren_file;
-    let sound = if !file.is_empty() && Path::new(file).exists() {
-      PathBuf::from(file)
+    let sound = if !file.as_os_str().is_empty() && file.exists() {
+      file.clone()
     } else {
       self.settings.siren_wav.clone()
     };
-    let argv = [PLAYER.to_string(), sound.to_string_lossy().into_owned()];
+    let argv = player_argv(&self.settings.player, &sound.to_string_lossy());
     if let Err(why) = self.launcher.launch(&argv) {
-      self.log.error("afplay failed", json!({"err": why.to_string(), "file": sound}));
+      self
+        .log
+        .error("siren player failed", json!({"err": why.to_string(), "file": sound, "player": argv}));
     }
   }
 
@@ -151,26 +165,51 @@ impl Siren {
 }
 
 impl AlertHook for Siren {
-  fn alert(&self, alert: &Alert, muted: bool) {
+  fn alert(&self, alert: &Alert, armed: bool) -> Option<bool> {
     if !self.due(alert) {
-      return;
+      return None;
     }
     let message = format!(
-      "SIREN {} {} +{} muted={muted}",
+      "SIREN {} {} +{} armed={armed}",
       alert.kind.as_str(),
       alert.project,
       thousands(alert.new)
     );
     self.log.warn(&message, json!({}));
-    if muted {
-      return;
+    if !armed {
+      return Some(false);
     }
+    let mut audible = false;
     if self.settings.sound {
       self.play();
+      audible = true;
     }
     if self.settings.voice && !self.settings.voice_cmd.is_empty() {
       self.speak(alert);
+      audible = true;
     }
+    Some(audible)
+  }
+}
+
+/// The player of a host with no `siren_player`: `afplay` on macOS, else the first of `PLAYERS` found in
+/// a folder of `path`; the bare name of the first where none is found, so its failure is logged.
+pub fn host_player(macos: bool, path: Option<OsString>) -> Vec<String> {
+  if macos {
+    return vec!["afplay".into(), FILE_MARK.into()];
+  }
+  let folders: Vec<PathBuf> = path.map(|path| std::env::split_paths(&path).collect()).unwrap_or_default();
+  let found = PLAYERS.iter().find(|player| folders.iter().any(|folder| folder.join(player).is_file()));
+  vec![found.unwrap_or(&PLAYERS[0]).to_string(), FILE_MARK.into()]
+}
+
+/// A player's argument list for one sound: every `{file}` replaced by its path, or the path appended where
+/// no argument holds one.
+pub fn player_argv(player: &[String], file: &str) -> Vec<String> {
+  if player.iter().any(|arg| arg.contains(FILE_MARK)) {
+    player.iter().map(|arg| arg.replace(FILE_MARK, file)).collect()
+  } else {
+    player.iter().cloned().chain([file.to_string()]).collect()
   }
 }
 

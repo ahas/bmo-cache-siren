@@ -1,9 +1,9 @@
-//! The engine: the transcripts it tails and their offsets, the sessions, the ring of rows and its durable
-//! log, the burst window, the rolling five-hour buckets, the overlay state and the last quota reading.
+//! The engine: the transcripts it tails and their offsets, the sessions, the event window and its durable
+//! log, the burst window and the settings (docs/api.md, Events).
 //!
-//! All of that mutable state sits behind one lock, so the scan, the posting callers and the readers of
-//! `stats` never see it half-changed. Files are read and written outside it; the event log has a lock of
-//! its own, shared by the append and the prune rewrite.
+//! All of that mutable state sits behind one lock, so the scan, the posting callers and the readers never
+//! see it half-changed. Files are read and written outside it; the event log has a lock of its own,
+//! shared by the append and the prune rewrite.
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::fs::{self, OpenOptions};
@@ -12,34 +12,31 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::SystemTime;
 
-use indexmap::IndexMap;
 use serde_json::{Map, Value, json};
 use tokio::sync::watch;
 
 use crate::attribution::Kind;
-use crate::burst::{Recent, burst_summary};
-use crate::clock::{now_epoch, now_local};
+use crate::burst::{BurstPart, Recent, burst_summary};
+use crate::clock::now_millis;
 use crate::config::Config;
-use crate::ctl::Ctl;
 use crate::data_dir::DataDir;
-use crate::event::{Event, Level, stamp, thousands};
+use crate::event::{Level, thousands};
 use crate::log::{Log, LogLevel};
 use crate::models::Backend;
-use crate::posted::posted_event;
+use crate::posted::{Previous, posted_usage};
 use crate::projects::{proj_dirs, project_of};
-use crate::quota::QuotaReading;
 use crate::session::Session;
 use crate::transcript::{Origin, read_line};
+use crate::wire::{
+  Event, EventPage, EventQuery, Happening, NewUsage, SessionStats, Settings, SettingsPatch, Siren,
+  SirenPart, Stats, StatsQuery, Usage,
+};
 
-/// One row of the ring: a row this run made, or one restored from the event log as it was written.
-pub type Row = Map<String, Value>;
+/// The page's size where `limit` is absent, and the most it may ask.
+pub const DEFAULT_LIMIT: u32 = 100;
+pub const MOST_LIMIT: u32 = 1000;
 
-/// The rolling window the quota estimate sums over.
-const ROLLING_S: f64 = 5.0 * 3600.0;
-/// `stats` counts sessions with a request in this span.
-const LIVE_S: f64 = 1800.0;
-
-/// A red row handed to whatever sounds the siren.
+/// A red request or a burst handed to whatever sounds the siren.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Alert {
   pub kind: Kind,
@@ -47,74 +44,78 @@ pub struct Alert {
   /// The session it belongs to; empty for a burst.
   pub sid: String,
   pub new: u64,
+  pub read: u64,
+  pub requests: u64,
   pub note: String,
+  /// A burst's projects, largest first.
+  pub parts: Vec<BurstPart>,
   /// Sound it whatever the cooldown.
   pub force: bool,
 }
 
-/// What sounds a red alert; `muted` is the overlay's state when it was raised.
+/// What sounds an alert. None where its cooldown keeps it quiet; else whether sound or voice went out,
+/// which only an `armed` siren lets them.
 pub trait AlertHook: Send + Sync {
-  fn alert(&self, alert: &Alert, muted: bool);
+  fn alert(&self, alert: &Alert, armed: bool) -> Option<bool>;
 }
 
-/// The hook of an engine that sounds nothing.
+/// The hook of an engine that raises every alert and sounds none.
 pub struct Silent;
 
 impl AlertHook for Silent {
-  fn alert(&self, _alert: &Alert, _muted: bool) {}
+  fn alert(&self, _alert: &Alert, _armed: bool) -> Option<bool> {
+    Some(false)
+  }
 }
 
-/// Tokens of one minute, in total and per project.
-#[derive(Clone, Debug, Default)]
-struct Bucket {
-  total: u64,
-  by: IndexMap<String, u64>,
+/// Why a request was refused, with the code the route answers.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Refusal {
+  BadRequest(String),
+  Conflict(String),
+  Gone(String),
 }
 
 struct State {
   config: Config,
   sessions: HashMap<String, Session>,
   offsets: BTreeMap<String, u64>,
-  ring: VecDeque<Row>,
-  seq: u64,
+  /// The newest `ring` events, oldest first.
+  window: VecDeque<Event>,
+  /// The number the next event takes.
+  next_id: i64,
   /// The requests of the burst window, by when they went out.
   recent: VecDeque<Recent>,
-  last_burst_siren: f64,
-  ctl: Ctl,
-  quota: Option<QuotaReading>,
-  /// Minute (Unix seconds / 60) → the Anthropic tokens of that minute.
-  minute: BTreeMap<i64, Bucket>,
+  last_burst_ms: i64,
   files_watched: usize,
-  last_event_ts: Option<String>,
 }
 
 impl State {
-  fn push(&mut self, row: Row) {
-    self.ring.push_back(row);
-    while self.ring.len() > self.config.ring {
-      self.ring.pop_front();
+  /// Number an event and keep it in the window.
+  fn record(&mut self, at: i64, happening: Happening) -> Event {
+    let event = Event {
+      id: self.next_id,
+      at,
+      happening,
+    };
+    self.next_id += 1;
+    self.window.push_back(event.clone());
+    while self.window.len() > self.config.ring.max(1) {
+      self.window.pop_front();
     }
+    event
   }
 
-  fn add_bucket(&mut self, epoch: f64, project: &str, tokens: u64) {
-    let bucket = self.minute.entry((epoch / 60.0).floor() as i64).or_default();
-    bucket.total += tokens;
-    *bucket.by.entry(project.into()).or_default() += tokens;
+  /// The number of the first event the window holds, or of the next one where it holds none.
+  fn window_start(&self) -> i64 {
+    self.window.front().map_or(self.next_id, |event| event.id)
   }
 
-  /// The tokens of the rolling five hours, in total and per project; older buckets are let go.
-  fn rolling(&mut self, now: f64) -> (u64, IndexMap<String, u64>) {
-    let cutoff = ((now - ROLLING_S) / 60.0).floor() as i64;
-    self.minute = self.minute.split_off(&cutoff);
-    let mut total = 0;
-    let mut by: IndexMap<String, u64> = IndexMap::new();
-    for bucket in self.minute.values() {
-      total += bucket.total;
-      for (project, tokens) in &bucket.by {
-        *by.entry(project.clone()).or_default() += tokens;
-      }
-    }
-    (total, by)
+  fn usages(&self) -> impl Iterator<Item = &Usage> {
+    self.window.iter().filter_map(|event| match &event.happening {
+      Happening::Usage(usage) => Some(usage.as_ref()),
+      _ => None,
+    })
   }
 }
 
@@ -124,13 +125,12 @@ pub struct Engine {
   data: DataDir,
   log: Arc<Log>,
   hook: Arc<dyn AlertHook>,
-  seq_tx: watch::Sender<u64>,
-  started: f64,
+  newest: watch::Sender<i64>,
 }
 
 impl Engine {
-  /// An engine over `data`, restoring the offsets, the overlay state and the newest `ring` rows of the
-  /// event log; the restored rows are numbered afresh.
+  /// An engine over `data`, restoring the offsets and the newest `ring` events of the event log; the
+  /// numbering carries on past the highest number in the log.
   pub fn new(config: Config, data: DataDir, log: Arc<Log>, hook: Arc<dyn AlertHook>) -> Engine {
     if let Err(why) = fs::create_dir_all(data.root()) {
       log.error("data directory not made", json!({"dir": data.root(), "err": why.to_string()}));
@@ -139,44 +139,25 @@ impl Engine {
       .and_then(|state| state.get("offsets").cloned())
       .and_then(|offsets| serde_json::from_value(offsets).ok())
       .unwrap_or_default();
-    let mut ctl = Ctl::default();
-    if let Some(Value::Object(saved)) = read_json(&data.ctl()) {
-      ctl.merge(&saved);
-    }
-    let mut state = State {
+    let (window, highest) = load_window(&data.events(), config.ring);
+    let state = State {
       sessions: HashMap::new(),
       offsets,
-      ring: VecDeque::new(),
-      seq: 0,
+      window,
+      next_id: highest + 1,
       recent: VecDeque::new(),
-      last_burst_siren: 0.0,
-      ctl,
-      quota: None,
-      minute: BTreeMap::new(),
+      last_burst_ms: 0,
       files_watched: 0,
-      last_event_ts: None,
       config,
     };
-    for mut row in load_recent_events(&data.events(), state.config.ring) {
-      state.seq += 1;
-      row.insert("seq".into(), state.seq.into());
-      state.push(row);
-    }
-    state.last_event_ts = state
-      .ring
-      .back()
-      .and_then(|row| row.get("ts_kst"))
-      .and_then(Value::as_str)
-      .map(Into::into);
-    let (seq_tx, _) = watch::channel(state.seq);
+    let (newest, _) = watch::channel(highest);
     Engine {
       state: Mutex::new(state),
       events_file: Mutex::new(()),
       data,
       log,
       hook,
-      seq_tx,
-      started: now_epoch(),
+      newest,
     }
   }
 
@@ -197,43 +178,19 @@ impl Engine {
     self.state().config.clone()
   }
 
-  /// Change the configuration as now held, under the one lock.
-  pub fn with_config<T>(&self, change: impl FnOnce(&mut Config) -> T) -> T {
-    change(&mut self.state().config)
+  /// The number of the newest event, which moves whenever one is recorded.
+  pub fn subscribe(&self) -> watch::Receiver<i64> {
+    self.newest.subscribe()
   }
 
-  /// The newest sequence number, which moves whenever a row is added.
-  pub fn subscribe(&self) -> watch::Receiver<u64> {
-    self.seq_tx.subscribe()
+  /// A copy of the window, oldest first.
+  pub fn window(&self) -> Vec<Event> {
+    self.state().window.iter().cloned().collect()
   }
 
-  pub fn seq(&self) -> u64 {
-    self.state().seq
-  }
-
-  /// A copy of the ring, oldest first.
-  pub fn rows(&self) -> Vec<Row> {
-    self.state().ring.iter().cloned().collect()
-  }
-
-  pub fn ctl(&self) -> Ctl {
-    self.state().ctl.clone()
-  }
-
-  /// Change the overlay state and keep it in the data directory; the state before and after.
-  pub fn set_ctl(&self, body: &Map<String, Value>) -> (Ctl, Ctl) {
-    let (before, after) = {
-      let mut state = self.state();
-      let before = state.ctl.clone();
-      state.ctl.merge(body);
-      (before, state.ctl.clone())
-    };
-    self.save_ctl(&after);
-    (before, after)
-  }
-
-  pub fn set_quota(&self, reading: QuotaReading) {
-    self.state().quota = Some(reading);
+  /// How many transcripts the last scan watched.
+  pub fn files_watched(&self) -> usize {
+    self.state().files_watched
   }
 
   // ---- persistence
@@ -243,12 +200,6 @@ impl Engine {
     let offsets = self.state().offsets.clone();
     if let Err(why) = replace_file(&self.data.state(), json!({"offsets": offsets}).to_string().as_bytes()) {
       self.log.error("state save failed", json!({"err": why.to_string()}));
-    }
-  }
-
-  fn save_ctl(&self, ctl: &Ctl) {
-    if let Ok(text) = serde_json::to_string(ctl) {
-      let _ = fs::write(self.data.ctl(), text);
     }
   }
 
@@ -275,49 +226,45 @@ impl Engine {
     found
   }
 
-  /// One pass of the scan loop: tail every recent transcript; the number of files watched.
+  /// One pass of the scan loop: tail every recent transcript and record what it says; the number of
+  /// files watched.
   pub fn scan_all(&self) -> usize {
     let files = self.files();
     self.state().files_watched = files.len();
     for path in &files {
-      self.scan(path, false, 0.0);
+      for usage in self.scan(path, i64::MIN) {
+        self.record_usage(usage, false);
+      }
     }
     files.len()
   }
 
-  /// At start, read the transcripts modified within `backfill_hours` from their beginning, adding only
-  /// rows inside that span and silently, and skip every other unread transcript to its end; then order
-  /// the ring by time and number it afresh.
+  /// At start, read the transcripts modified within `backfill_hours` from their beginning, recording
+  /// only the Usages inside that span, silently and in time order, and skip every other unread
+  /// transcript to its end.
   pub fn backfill(&self) {
-    let horizon = now_epoch() - self.config().backfill_hours * 3600.0;
-    let mut added = 0;
+    let horizon = now_millis() - (self.config().backfill_hours * 3_600_000.0) as i64;
+    let mut found = Vec::new();
     for path in self.files() {
       let key = path.to_string_lossy().into_owned();
       if self.state().offsets.contains_key(&key) {
         continue;
       }
       let Ok(meta) = fs::metadata(&path) else { continue };
-      if modified_epoch(&meta) >= horizon {
+      if modified_millis(&meta) >= horizon {
         self.state().offsets.insert(key, 0);
-        added += self.scan(&path, true, horizon);
+        found.extend(self.scan(&path, horizon));
       } else {
         self.state().offsets.insert(key, meta.len());
       }
     }
-    let files = {
-      let mut state = self.state();
-      let mut rows: Vec<Row> = state.ring.drain(..).collect();
-      rows.sort_by(|a, b| epoch_in(a).total_cmp(&epoch_in(b)));
-      state.seq = 0;
-      for mut row in rows {
-        state.seq += 1;
-        row.insert("seq".into(), state.seq.into());
-        state.push(row);
-      }
-      self.seq_tx.send_replace(state.seq);
-      state.offsets.len()
-    };
+    found.sort_by_key(|usage| usage.at);
+    let added = found.len();
+    for usage in found {
+      self.record_usage(usage, true);
+    }
     self.save();
+    let files = self.state().offsets.len();
     self.log.info("backfill done", json!({"events": added, "files": files}));
   }
 
@@ -332,20 +279,19 @@ impl Engine {
     }
   }
 
-  /// Read the lines added to one transcript since its offset, up to the last whole line, and add the rows
-  /// they make at or after `min_epoch`; `quiet` adds them without the burst window or an alert. The
-  /// number of rows added.
-  pub fn scan(&self, path: &Path, quiet: bool, min_epoch: f64) -> usize {
+  /// Read the lines added to one transcript since its offset, up to the last whole line; the Usages they
+  /// make at or after `min_at`, in the order of the file.
+  pub fn scan(&self, path: &Path, min_at: i64) -> Vec<Usage> {
     let key = path.to_string_lossy().into_owned();
-    let Ok(size) = fs::metadata(path).map(|meta| meta.len()) else { return 0 };
+    let Ok(size) = fs::metadata(path).map(|meta| meta.len()) else { return Vec::new() };
     let mut offset = self.state().offsets.get(&key).copied().unwrap_or(0);
     if size < offset {
       offset = 0;
     }
     if size == offset {
-      return 0;
+      return Vec::new();
     }
-    let Ok(data) = read_from(path, offset) else { return 0 };
+    let Ok(data) = read_from(path, offset) else { return Vec::new() };
     let whole = data.iter().rposition(|&byte| byte == b'\n').map_or(0, |at| at + 1);
     let data = &data[..whole];
     self.state().offsets.insert(key, offset + whole as u64);
@@ -359,21 +305,20 @@ impl Engine {
       is_agent: owner.is_agent,
       parent: owner.parent,
     };
-    let mut added = 0;
+    let mut found = Vec::new();
     for raw in data.split(|&byte| byte == b'\n').filter(|raw| !raw.is_empty()) {
       let Ok(line) = serde_json::from_slice::<Value>(raw) else { continue };
-      if let Some(event) = self.handle(&line, &origin)
-        && event.epoch >= min_epoch
+      if let Some(usage) = self.handle(&line, &origin)
+        && usage.at >= min_at
       {
-        self.emit(event, quiet);
-        added += 1;
+        found.push(usage);
       }
     }
-    added
+    found
   }
 
-  /// Read one parsed transcript line into its session; the row it makes, if any.
-  pub fn handle(&self, line: &Value, origin: &Origin) -> Option<Event> {
+  /// Read one parsed transcript line into its session; the Usage it makes, if any.
+  pub fn handle(&self, line: &Value, origin: &Origin) -> Option<Usage> {
     let mut state = self.state();
     let State {
       sessions, config, ..
@@ -382,134 +327,283 @@ impl Engine {
     read_line(line, origin, session, config)
   }
 
-  /// Check one posted request (docs/api.md, `POST /events`) and make its row; a session is seen once a row
-  /// of the same mode, session and model is in the ring.
-  pub fn external(&self, body: &Value) -> Result<Event, String> {
+  /// Check one posted request (docs/api.md, `POST /events`) and make its Usage, read against what the
+  /// window holds of its session.
+  pub fn posted(&self, body: NewUsage) -> Result<Usage, String> {
     let state = self.state();
-    let seen = |mode: &str, sid: &str, model: &str| {
-      let is = |row: &Row, key: &str, want: &str| row.get(key).and_then(Value::as_str) == Some(want);
-      state
-        .ring
-        .iter()
-        .any(|row| is(row, "mode", mode) && is(row, "sid", sid) && is(row, "model", model))
-    };
-    posted_event(body, seen, &state.config, &now_local())
+    let harness = body.harness_name.as_deref().unwrap_or("").trim();
+    let session = body.session_id.trim();
+    let model = body.model_name.trim();
+    let mut previous = Previous::default();
+    for usage in state.usages().filter(|usage| usage.session_id == session) {
+      previous.seen |= usage.harness_name == harness && usage.model_name == model;
+      previous.at = Some(usage.at);
+      previous.context_token_count = usage.context_token_count;
+    }
+    posted_usage(body, previous, &state.config)
   }
 
-  // ---- emit
+  // ---- recording
 
-  /// Add a row: number it into the ring, append it to the event log and log a notable one. Unless
-  /// `quiet`, it also enters the burst window and the rolling buckets, a red row is handed to the alert
-  /// hook, and a burst past `burst_red_tokens` adds a burst row and its alert. The row's sequence number.
-  pub fn emit(&self, event: Event, quiet: bool) -> u64 {
-    let now = now_epoch();
-    let notable = matches!(event.level, Level::Yellow | Level::Red)
-      || matches!(event.kind, Kind::Refusal | Kind::Quota | Kind::Cmd | Kind::Compact);
-    let summary = notable.then(|| summary_line(&event));
-    let red = (event.level == Level::Red).then(|| Alert {
-      kind: event.kind,
-      project: event.project.clone(),
-      sid: event.sid.clone(),
-      new: event.new,
-      note: event.note.clone(),
+  /// Record a Usage: number it into the window, append it to the event log and log a notable one. Unless
+  /// `quiet`, it also enters the burst window, a red Usage is handed to the alert hook, and a burst past
+  /// `burst_red_tokens` raises a burst alert; each alert raised is recorded as a Siren. The Usage's
+  /// event.
+  pub fn record_usage(&self, usage: Usage, quiet: bool) -> Event {
+    let now = now_millis();
+    let notable = matches!(usage.level, Level::Yellow | Level::Red)
+      || matches!(usage.kind, Kind::Refusal | Kind::Quota | Kind::Cmd | Kind::Compact);
+    let summary = notable.then(|| summary_line(&usage));
+    let red = (usage.level == Level::Red).then(|| Alert {
+      kind: usage.kind,
+      project: usage.project_name.clone(),
+      sid: usage.session_id.clone(),
+      new: usage.new_token_count,
+      read: usage.cached_token_count,
+      requests: 1,
+      note: usage.note.clone(),
+      parts: Vec::new(),
       force: false,
     });
-    let (backend, new, epoch, project, read) =
-      (event.backend, event.new, event.epoch, event.project.clone(), event.read);
+    let (backend, new, at, project, read) = (
+      usage.backend,
+      usage.new_token_count,
+      usage.at,
+      usage.project_name.clone(),
+      usage.cached_token_count,
+    );
 
     let mut alerts = Vec::new();
-    let (seq, row, muted) = {
+    let (event, armed) = {
       let mut state = self.state();
-      state.seq += 1;
-      let seq = state.seq;
-      let row = event.into_row(seq);
-      state.last_event_ts = row.get("ts_kst").and_then(Value::as_str).map(Into::into);
-      state.push(row.clone());
+      let event = state.record(at, Happening::Usage(Box::new(usage)));
       if !quiet {
-        let at = if epoch > 0.0 { epoch } else { now };
         if backend != Backend::Local && new > 0 {
           // The window is measured by when the request went out: by when the line was read, a
           // transcript written late, a finished subagent flushing at once, would pack requests from
           // different minutes into one window.
           state.recent.push_back(Recent {
-            at,
+            at: at as f64 / 1000.0,
             new,
-            project: project.clone(),
+            project,
             read,
           });
         }
-        if backend == Backend::Anthropic && new > 0 {
-          let owner = if project.is_empty() { "?" } else { project.as_str() };
-          state.add_bucket(at, owner, new);
-        }
-        let window = state.config.burst_window_s;
-        state.recent.retain(|request| request.at >= now - window);
+        let window_ms = (state.config.burst_window_s * 1000.0) as i64;
+        let cutoff = (now - window_ms) as f64 / 1000.0;
+        state.recent.retain(|request| request.at >= cutoff);
         alerts.extend(red);
         let burst = burst_summary(&state.recent);
-        if burst.new >= state.config.burst_red_tokens && now - state.last_burst_siren > window {
-          state.last_burst_siren = now;
+        if burst.new >= state.config.burst_red_tokens && now - state.last_burst_ms > window_ms {
+          state.last_burst_ms = now;
           let owners: Vec<&str> = burst.parts.iter().take(4).map(|part| part.project.as_str()).collect();
-          let owners = owners.join(",");
           alerts.push(Alert {
             kind: Kind::Burst,
-            project: owners.clone(),
+            project: owners.join(","),
             sid: String::new(),
             new: burst.new,
-            note: format!("{} req/{}s", burst.req, whole_number(window)),
+            read: burst.read,
+            requests: burst.req,
+            note: format!("{} req in {}s", burst.req, whole_number(state.config.burst_window_s)),
+            parts: burst.parts,
             force: true,
           });
-          state.seq += 1;
-          let (ts_kst, date_kst, _) = stamp(&now_local());
-          let burst_row = json!({
-            "seq": state.seq, "ts_kst": ts_kst, "date_kst": date_kst, "epoch": now,
-            "kind": "burst", "level": "red", "project": owners, "session": "", "m": "",
-            "new": burst.new, "read": burst.read, "note": format!("{} req in {}s", burst.req, whole_number(window)),
-            "parts": burst.parts, "req": "", "backend": "anthropic", "cost": 0,
-          });
-          if let Value::Object(burst_row) = burst_row {
-            state.push(burst_row);
-          }
         }
       }
-      self.seq_tx.send_replace(state.seq);
-      (seq, row, state.ctl.muted)
+      (event, state.config.armed)
     };
-
-    if let Err(why) = self.append(&row) {
-      self.log.error("events append failed", json!({"err": why.to_string()}));
-    }
+    self.keep(&event);
     if let Some((level, message, fields)) = summary {
       self.log.line(level, &message, fields);
     }
     for alert in &alerts {
-      self.hook.alert(alert, muted);
+      if let Some(audible) = self.hook.alert(alert, armed) {
+        self.record(Happening::Siren(siren_of(alert, now, audible)));
+      }
     }
-    seq
+    event
   }
 
-  /// Hand one alert to the hook with the overlay's muted state; that state.
-  pub fn alert(&self, alert: &Alert) -> bool {
-    let muted = self.state().ctl.muted;
-    self.hook.alert(alert, muted);
-    muted
+  /// Number an event recorded now into the window and keep it in the event log.
+  pub fn record(&self, happening: Happening) -> Event {
+    let event = self.state().record(now_millis(), happening);
+    self.keep(&event);
+    event
   }
 
-  fn append(&self, row: &Row) -> io::Result<()> {
+  /// Append an event to the event log and tell the readers waiting on the stream.
+  fn keep(&self, event: &Event) {
+    if let Err(why) = self.append(event) {
+      self.log.error("events append failed", json!({"err": why.to_string()}));
+    }
+    self.newest.send_replace(event.id);
+  }
+
+  /// Sound the siren once as a red cold alert, whatever the cooldown; whether sound or voice went out.
+  pub fn test_siren(&self) -> bool {
+    let armed = self.state().config.armed;
+    let alert = Alert {
+      kind: Kind::Cold,
+      project: "test".into(),
+      sid: "test".into(),
+      new: 123_456,
+      read: 0,
+      requests: 1,
+      note: "manual test".into(),
+      parts: Vec::new(),
+      force: true,
+    };
+    self.hook.alert(&alert, armed).unwrap_or(false)
+  }
+
+  fn append(&self, event: &Event) -> io::Result<()> {
+    let line = serde_json::to_string(event).map_err(io::Error::other)?;
     let _held = self.events_file.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let mut file = OpenOptions::new().create(true).append(true).open(self.data.events())?;
-    file.write_all(format!("{}\n", Value::Object(row.clone())).as_bytes())
+    file.write_all(format!("{line}\n").as_bytes())
+  }
+
+  // ---- the settings
+
+  pub fn settings(&self) -> Settings {
+    self.state().config.settings()
+  }
+
+  /// Check and apply a settings patch: the settings after it, and the config keys it changed as they are
+  /// merged into the config file. A change records a `settings.changed` event.
+  pub fn change_settings(&self, patch: &SettingsPatch) -> Result<(Settings, Map<String, Value>), Refusal> {
+    if patch.ttl_ms == Some(0) {
+      return Err(Refusal::BadRequest("ttlMs must be above 0".into()));
+    }
+    if patch.threshold == Some(0) {
+      return Err(Refusal::BadRequest("threshold must be above 0".into()));
+    }
+    let (settings, changed) = {
+      let mut state = self.state();
+      let yellow = state.config.yellow_new_tokens;
+      if let Some(threshold) = patch.threshold
+        && threshold <= yellow
+      {
+        return Err(Refusal::Conflict(format!(
+          "threshold must stay above the yellow line, {yellow} new tokens"
+        )));
+      }
+      let changed = state.config.apply(patch);
+      (state.config.settings(), changed)
+    };
+    if !changed.is_empty() {
+      self.record(Happening::Settings(settings));
+    }
+    Ok((settings, changed))
+  }
+
+  // ---- reading
+
+  /// The events a page answers (docs/api.md, `GET /events`).
+  pub fn page(&self, query: &EventQuery) -> Result<EventPage, Refusal> {
+    let limit = limit_of(query.limit)?;
+    let filter = Filter::of(query)?;
+    let state = self.state();
+    if let Some(after) = query.after {
+      gone_check(&state, after)?;
+      let mut matching = state.window.iter().filter(|event| event.id > after && filter.passes(event));
+      let items: Vec<Event> = matching.by_ref().take(limit).cloned().collect();
+      let more = matching.next().is_some();
+      return Ok(EventPage { items, more });
+    }
+    let matching: Vec<&Event> = state.window.iter().filter(|event| filter.passes(event)).collect();
+    let skip = matching.len().saturating_sub(limit);
+    let items = matching.into_iter().skip(skip).cloned().collect();
+    Ok(EventPage { items, more: false })
+  }
+
+  /// Where a stream starts: after `after`, or after the newest event where none is given.
+  pub fn stream_start(&self, after: Option<i64>) -> Result<i64, Refusal> {
+    let state = self.state();
+    match after {
+      Some(after) => {
+        gone_check(&state, after)?;
+        Ok(after)
+      }
+      None => Ok(state.next_id - 1),
+    }
+  }
+
+  /// The events past `after` that `query` lets through, oldest first.
+  pub fn events_after(&self, after: i64, filter: &Filter) -> Vec<Event> {
+    let state = self.state();
+    state
+      .window
+      .iter()
+      .filter(|event| event.id > after && filter.passes(event))
+      .cloned()
+      .collect()
+  }
+
+  /// The window's Usages summed by session (docs/api.md, Stats).
+  pub fn stats(&self, query: &StatsQuery) -> Result<Stats, Refusal> {
+    if query.since.is_some_and(|since| since < 0) {
+      return Err(Refusal::BadRequest("since must be epoch milliseconds, at least 0".into()));
+    }
+    let state = self.state();
+    let since = query
+      .since
+      .unwrap_or_else(|| state.window.iter().map(|event| event.at).min().unwrap_or_else(now_millis));
+    let wanted =
+      |session: Option<&str>| query.session_id.as_deref().is_none_or(|want| session == Some(want));
+    let mut sessions: Vec<SessionStats> = Vec::new();
+    let mut siren_count = 0;
+    for event in state.window.iter().filter(|event| event.at >= since) {
+      match &event.happening {
+        Happening::Siren(siren) if wanted(siren.session_id.as_deref()) => siren_count += 1,
+        Happening::Usage(usage) if !usage.session_id.is_empty() && wanted(Some(&usage.session_id)) => {
+          let index = match sessions.iter().position(|sums| sums.session_id == usage.session_id) {
+            Some(index) => index,
+            None => {
+              sessions.push(SessionStats {
+                session_id: usage.session_id.clone(),
+                project_name: String::new(),
+                harness_name: String::new(),
+                model_name: String::new(),
+                request_count: 0,
+                new_token_count: 0,
+                cached_token_count: 0,
+                output_token_count: 0,
+                cached_share: None,
+                cold_count: 0,
+                first_at: usage.at,
+                last_at: usage.at,
+              });
+              sessions.len() - 1
+            }
+          };
+          add_usage(&mut sessions[index], usage);
+        }
+        _ => {}
+      }
+    }
+    for sums in &mut sessions {
+      let total = sums.cached_token_count + sums.new_token_count;
+      sums.cached_share = (total > 0).then(|| sums.cached_token_count as f64 / total as f64);
+    }
+    sessions.sort_by_key(|sums| std::cmp::Reverse(sums.last_at));
+    Ok(Stats {
+      sessions,
+      siren_count,
+      since,
+    })
   }
 
   // ---- the event log
 
-  /// Drop the event-log rows older than `retention_days`, by an atomic rewrite; 0 keeps everything.
+  /// Drop the event-log lines older than `retention_days`, by an atomic rewrite; 0 keeps everything.
   pub fn prune_events(&self) {
     let days = self.config().retention_days;
     let path = self.data.events();
     if days <= 0.0 || !path.exists() {
       return;
     }
-    let horizon = now_epoch() - days * 86_400.0;
+    let horizon = now_millis() - (days * 86_400_000.0) as i64;
     let outcome = {
       let _held = self.events_file.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
       prune_file(&path, horizon)
@@ -524,166 +618,161 @@ impl Engine {
       Err(why) => self.log.error("prune failed", json!({"err": why.to_string()})),
     }
   }
+}
 
-  /// At start, fill the rolling buckets from the Anthropic rows of the event log's last five hours.
-  pub fn seed_buckets(&self) {
-    let cutoff = now_epoch() - ROLLING_S;
-    let mut seeded = 0;
-    let text = fs::read(self.data.events()).unwrap_or_default();
-    let mut state = self.state();
-    for raw in text.split(|&byte| byte == b'\n') {
-      let Ok(Value::Object(row)) = serde_json::from_slice::<Value>(raw) else { continue };
-      let epoch = epoch_in(&row);
-      if row.get("backend").and_then(Value::as_str) == Some("anthropic") && epoch >= cutoff {
-        let project = row.get("project").and_then(Value::as_str).filter(|p| !p.is_empty()).unwrap_or("?");
-        let new = row.get("new").and_then(Value::as_u64).unwrap_or(0);
-        state.add_bucket(epoch, project, new);
-        seeded += 1;
-      }
-    }
-    let (total, _) = state.rolling(now_epoch());
-    drop(state);
-    self.log.info(
-      "rolling 5h buckets seeded from events.jsonl",
-      json!({"events": seeded, "window_tokens": total}),
-    );
-  }
+/// Which events a reader asked for: by kind and by session.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Filter {
+  kinds: Option<Vec<String>>,
+  session_id: Option<String>,
+}
 
-  // ---- stats
-
-  /// The `GET /stats` object (docs/api.md).
-  pub fn stats(&self) -> Value {
-    let now = now_epoch();
-    let mut state = self.state();
-    let mut per_min = [0u64; 10];
-    let mut live = std::collections::HashSet::new();
-    for row in &state.ring {
-      let local = row.get("backend").and_then(Value::as_str) == Some("local");
-      let epoch = row.get("epoch").and_then(Value::as_f64);
-      let new = row.get("new").and_then(Value::as_u64).unwrap_or(0);
-      if !local && new > 0 {
-        let age = now - epoch.unwrap_or(now);
-        if (0.0..600.0).contains(&age) {
-          per_min[9 - (age / 60.0) as usize] += new;
+impl Filter {
+  /// The filter a query names; an unknown kind is refused.
+  pub fn of(query: &EventQuery) -> Result<Filter, Refusal> {
+    let kinds = match query.kinds.as_deref() {
+      None => None,
+      Some(kinds) => {
+        let kinds: Vec<String> = kinds
+          .split(',')
+          .map(str::trim)
+          .filter(|kind| !kind.is_empty())
+          .map(Into::into)
+          .collect();
+        if let Some(unknown) = kinds.iter().find(|kind| !crate::wire::EVENT_KINDS.contains(&kind.as_str()))
+        {
+          return Err(Refusal::BadRequest(format!(
+            "kinds names {unknown}, which is none of {}",
+            crate::wire::EVENT_KINDS.join(", ")
+          )));
         }
+        Some(kinds)
       }
-      if let Some(sid) = row.get("sid").and_then(Value::as_str).filter(|sid| !sid.is_empty())
-        && !local
-        && now - epoch.unwrap_or(0.0) < LIVE_S
-      {
-        live.insert(sid.to_string());
-      }
-    }
-    let new_60s: u64 = state
-      .recent
-      .iter()
-      .filter(|request| request.at > now - 60.0)
-      .map(|request| request.new)
-      .sum();
-
-    let (total, by) = state.rolling(now);
-    let mut quota = match &state.quota {
-      Some(reading) => match serde_json::to_value(reading) {
-        Ok(Value::Object(map)) => map,
-        _ => Map::new(),
-      },
-      None => Map::new(),
     };
-    let used = quota.get("five_h").cloned().unwrap_or(Value::Null);
-    let util = used.as_f64();
-    let rate = util
-      .filter(|&util| util != 0.0 && total > 0)
-      .map(|util| round(util / (total as f64 / 1e6), 3));
-    let mut segments: Vec<(String, u64)> = by.into_iter().collect();
-    segments.sort_by_key(|(_, tokens)| std::cmp::Reverse(*tokens));
-    let segments: Vec<Value> = match util {
-      Some(util) if total > 0 => segments
-        .into_iter()
-        .take(12)
-        .map(|(project, tokens)| json!({"project": project, "tokens": tokens, "pct": round(tokens as f64 / total as f64 * util, 2)}))
-        .collect(),
-      _ => Vec::new(),
-    };
-    quota.insert("pct_per_mtok".into(), json!(rate));
-    quota.insert("window_tokens".into(), json!(total));
-    quota.insert(
-      "budget".into(),
-      json!({"used_pct": if util.is_some() { used } else { Value::Null },
-             "headroom_pct": util.map(|util| round(100.0 - util, 1)),
-             "segments": segments, "rolling_5h": true}),
-    );
-    let config = &state.config;
-    json!({
-      "per_min": per_min,
-      "new_60s": new_60s,
-      "sessions_30m": live.len(),
-      "quota": quota,
-      "uptime_s": (now - self.started) as i64,
-      "files": state.files_watched,
-      "last_event": state.last_event_ts,
-      "ctl": state.ctl,
-      "cfg": {"yellow_new_tokens": config.yellow_new_tokens, "red_new_tokens": config.red_new_tokens,
-              "burst_red_tokens": config.burst_red_tokens},
+    Ok(Filter {
+      kinds,
+      session_id: query.session_id.clone(),
     })
   }
+
+  pub fn passes(&self, event: &Event) -> bool {
+    let kind = event.happening.kind();
+    self.kinds.as_ref().is_none_or(|kinds| kinds.iter().any(|want| want == kind))
+      && self.session_id.as_deref().is_none_or(|want| event.happening.session_id() == Some(want))
+  }
 }
 
-/// The newest `limit` rows of the event log that read as objects; a broken line is skipped and does not
-/// cost the rest.
-pub fn load_recent_events(path: &Path, limit: usize) -> Vec<Row> {
-  if limit == 0 {
-    return Vec::new();
+fn limit_of(limit: Option<u32>) -> Result<usize, Refusal> {
+  match limit.unwrap_or(DEFAULT_LIMIT) {
+    limit @ 1..=MOST_LIMIT => Ok(limit as usize),
+    _ => Err(Refusal::BadRequest(format!("limit must be 1 to {MOST_LIMIT}"))),
   }
-  let Ok(text) = fs::read(path) else { return Vec::new() };
-  let mut rows = VecDeque::with_capacity(limit);
+}
+
+/// A cursor from before the window cannot be resumed from.
+fn gone_check(state: &State, after: i64) -> Result<(), Refusal> {
+  let start = state.window_start();
+  if after < start - 1 {
+    return Err(Refusal::Gone(format!(
+      "the window starts at event {start}; read the page again without a cursor"
+    )));
+  }
+  Ok(())
+}
+
+fn add_usage(sums: &mut SessionStats, usage: &Usage) {
+  sums.project_name = usage.project_name.clone();
+  sums.harness_name = usage.harness_name.clone();
+  sums.model_name = usage.model_name.clone();
+  if usage.new_token_count + usage.cached_token_count + usage.output_token_count > 0 {
+    sums.request_count += 1;
+  }
+  sums.new_token_count += usage.new_token_count;
+  sums.cached_token_count += usage.cached_token_count;
+  sums.output_token_count += usage.output_token_count;
+  if usage.kind == Kind::Cold {
+    sums.cold_count += 1;
+  }
+  sums.first_at = sums.first_at.min(usage.at);
+  sums.last_at = sums.last_at.max(usage.at);
+}
+
+/// The Siren an alert raised at `at`.
+fn siren_of(alert: &Alert, at: i64, audible: bool) -> Siren {
+  Siren {
+    kind: alert.kind,
+    at,
+    session_id: (!alert.sid.is_empty()).then(|| alert.sid.clone()),
+    project_name: alert.project.clone(),
+    new_token_count: alert.new,
+    cached_token_count: alert.read,
+    request_count: alert.requests,
+    note: alert.note.clone(),
+    parts: alert
+      .parts
+      .iter()
+      .map(|part| SirenPart {
+        project_name: part.project.clone(),
+        new_token_count: part.new,
+        cached_token_count: part.read,
+        request_count: part.req,
+      })
+      .collect(),
+    audible,
+  }
+}
+
+/// The newest `limit` events of the event log, and the highest number in it; a line of another shape is
+/// skipped and does not cost the rest.
+pub fn load_window(path: &Path, limit: usize) -> (VecDeque<Event>, i64) {
+  let mut window = VecDeque::new();
+  let mut highest = 0;
+  let Ok(text) = fs::read(path) else { return (window, highest) };
   for raw in text.split(|&byte| byte == b'\n') {
-    if let Ok(Value::Object(row)) = serde_json::from_slice::<Value>(raw) {
-      if rows.len() == limit {
-        rows.pop_front();
+    let Ok(event) = serde_json::from_slice::<Event>(raw) else { continue };
+    highest = highest.max(event.id);
+    if limit > 0 {
+      if window.len() == limit {
+        window.pop_front();
       }
-      rows.push_back(row);
+      window.push_back(event);
     }
   }
-  rows.into()
+  (window, highest)
 }
 
-/// A notable row's log line: its level, its message and its fields.
-fn summary_line(event: &Event) -> (LogLevel, String, Value) {
-  let level = if event.level == Level::Red { LogLevel::Warn } else { LogLevel::Info };
+/// A notable Usage's log line: its level, its message and its fields.
+fn summary_line(usage: &Usage) -> (LogLevel, String, Value) {
+  let level = if usage.level == Level::Red { LogLevel::Warn } else { LogLevel::Info };
   let message = format!(
     "{} {}/{} {} +{} read={} {} «{}»",
-    event.kind.as_str().to_uppercase(),
-    event.project,
-    event.session,
-    event.m,
-    thousands(event.new),
-    thousands(event.read),
-    event.note,
-    event.req
+    usage.kind.as_str().to_uppercase(),
+    usage.project_name,
+    usage.session_id.chars().take(8).collect::<String>(),
+    usage.model_label,
+    thousands(usage.new_token_count),
+    thousands(usage.cached_token_count),
+    usage.note,
+    usage.request_label
   );
-  (level, message, json!({"lvl": event.level, "cost": event.cost, "agent": event.agent}))
+  (
+    level,
+    message,
+    json!({"lvl": usage.level, "cost": usage.cost_usd, "actor": usage.actor_name}),
+  )
 }
 
-fn epoch_in(row: &Row) -> f64 {
-  row.get("epoch").and_then(Value::as_f64).unwrap_or(0.0)
-}
-
-fn modified_epoch(meta: &fs::Metadata) -> f64 {
+fn modified_millis(meta: &fs::Metadata) -> i64 {
   meta
     .modified()
     .ok()
     .and_then(|at| at.duration_since(SystemTime::UNIX_EPOCH).ok())
-    .map_or(0.0, |since| since.as_secs_f64())
+    .map_or(0, |since| since.as_millis() as i64)
 }
 
 /// Seconds as the burst note writes them: whole seconds without a fraction.
 fn whole_number(seconds: f64) -> String {
   if seconds.fract() == 0.0 { format!("{}", seconds as i64) } else { seconds.to_string() }
-}
-
-fn round(value: f64, places: i32) -> f64 {
-  let scale = 10f64.powi(places);
-  (value * scale).round() / scale
 }
 
 fn read_json(path: &Path) -> Option<Value> {
@@ -707,9 +796,9 @@ fn replace_file(path: &Path, contents: &[u8]) -> io::Result<()> {
   Ok(())
 }
 
-/// Keep the event-log lines at or after `horizon`; a line that is no row counts as oldest. Rewritten
-/// only when something goes; the number removed and kept.
-fn prune_file(path: &Path, horizon: f64) -> io::Result<(usize, usize)> {
+/// Keep the event-log lines recorded at or after `horizon`; a line that is no event counts as oldest.
+/// Rewritten only when something goes; the number removed and kept.
+fn prune_file(path: &Path, horizon: i64) -> io::Result<(usize, usize)> {
   let text = fs::read(path)?;
   let mut kept = Vec::new();
   let mut removed = 0;
@@ -718,11 +807,8 @@ fn prune_file(path: &Path, horizon: f64) -> io::Result<(usize, usize)> {
     if raw.iter().all(u8::is_ascii_whitespace) {
       continue;
     }
-    let epoch = match serde_json::from_slice::<Value>(raw) {
-      Ok(Value::Object(row)) => epoch_in(&row),
-      _ => 0.0,
-    };
-    if epoch >= horizon {
+    let at = serde_json::from_slice::<Event>(raw).map_or(i64::MIN, |event| event.at);
+    if at >= horizon {
       kept.extend_from_slice(raw);
       kept.push(b'\n');
       kept_count += 1;
