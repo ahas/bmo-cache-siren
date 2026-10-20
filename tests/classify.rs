@@ -1,4 +1,4 @@
-//! How `<synthetic>` lines are classified; the values come from lines the CLI really left in transcripts.
+//! How `<synthetic>` lines are classified.
 
 use std::sync::Arc;
 

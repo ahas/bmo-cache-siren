@@ -1,4 +1,4 @@
-//! The cause ladder and the TTL choice; the values come from real requests.
+//! The cause ladder and the TTL choice.
 
 use cache_siren::{Cause, Config, Flags, Kind, Request, attribute};
 use serde_json::json;
@@ -82,10 +82,10 @@ fn sonnet_follows_the_same_default_hour_as_opus() {
   );
 }
 
-/// A gap of 3382s is inside an hour, and it held 34177 but read only 2315: the cache was alive, so this
-/// is not an expiry but a changed prefix.
+/// A gap inside the cache lifetime that read only a small part back is not an expiry but a changed
+/// prefix.
 #[test]
-fn owner_report_is_prefix_changed() {
+fn alive_cache_with_a_moved_prefix_is_prefix_changed() {
   let opus = Some("claude-opus-5");
   assert_eq!(
     named(Kind::Growth, NONE, "claude-opus-5", opus, Some(3382.0), 2315, 34177),

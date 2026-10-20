@@ -15,8 +15,8 @@
     "needs": [
       "service/wire"
     ],
-    "base": "c8f952552cfbea6f25e4bac06a61212e637b54b7",
-    "changed": 1792498856305
+    "base": "80000ffd70034e1c5910950cbda637e716de362b",
+    "changed": 1792510097756
   },
   {
     "id": "service/clocks",
@@ -32,8 +32,8 @@
     "needs": [
       "engine/engine"
     ],
-    "base": "c8f952552cfbea6f25e4bac06a61212e637b54b7",
-    "changed": 1792498856302
+    "base": "80000ffd70034e1c5910950cbda637e716de362b",
+    "changed": 1792510097759
   },
   {
     "id": "service/config",
@@ -57,8 +57,8 @@
       "service/storage",
       "service/wire"
     ],
-    "base": "c8f952552cfbea6f25e4bac06a61212e637b54b7",
-    "changed": 1792498856290
+    "base": "80000ffd70034e1c5910950cbda637e716de362b",
+    "changed": 1792510097762
   },
   {
     "id": "service/http",
@@ -80,8 +80,8 @@
       "service/time",
       "service/wire"
     ],
-    "base": "c8f952552cfbea6f25e4bac06a61212e637b54b7",
-    "changed": 1792498856308
+    "base": "80000ffd70034e1c5910950cbda637e716de362b",
+    "changed": 1792510097765
   },
   {
     "id": "service/log",
@@ -99,8 +99,8 @@
     "needs": [
       "service/time"
     ],
-    "base": "c8f952552cfbea6f25e4bac06a61212e637b54b7",
-    "changed": 1792498856284
+    "base": "80000ffd70034e1c5910950cbda637e716de362b",
+    "changed": 1792510097768
   },
   {
     "id": "service/openapi",
@@ -119,8 +119,8 @@
       "service/wire",
       "mcp/server"
     ],
-    "base": "c8f952552cfbea6f25e4bac06a61212e637b54b7",
-    "changed": 1792498856313
+    "base": "80000ffd70034e1c5910950cbda637e716de362b",
+    "changed": 1792510097771
   },
   {
     "id": "service/storage",
@@ -139,8 +139,8 @@
     ],
     "aliases": [],
     "needs": [],
-    "base": "c8f952552cfbea6f25e4bac06a61212e637b54b7",
-    "changed": 1792498856270
+    "base": "80000ffd70034e1c5910950cbda637e716de362b",
+    "changed": 1792510097774
   },
   {
     "id": "service/time",
@@ -159,8 +159,8 @@
     ],
     "aliases": [],
     "needs": [],
-    "base": "c8f952552cfbea6f25e4bac06a61212e637b54b7",
-    "changed": 1792498856267
+    "base": "80000ffd70034e1c5910950cbda637e716de362b",
+    "changed": 1792510097777
   },
   {
     "id": "service/token",
@@ -175,8 +175,8 @@
     ],
     "aliases": [],
     "needs": [],
-    "base": "c8f952552cfbea6f25e4bac06a61212e637b54b7",
-    "changed": 1792498856272
+    "base": "80000ffd70034e1c5910950cbda637e716de362b",
+    "changed": 1792510097779
   },
   {
     "id": "service/wire",
@@ -210,7 +210,7 @@
       "analysis/levels",
       "analysis/models"
     ],
-    "base": "c8f952552cfbea6f25e4bac06a61212e637b54b7",
-    "changed": 1792498856287
+    "base": "80000ffd70034e1c5910950cbda637e716de362b",
+    "changed": 1792510097782
   }
 ]

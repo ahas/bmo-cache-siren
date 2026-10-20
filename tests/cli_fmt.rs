@@ -26,7 +26,7 @@ fn status_names_the_version_the_switch_and_the_window() {
   let health = Health {
     ready: true,
     reason: None,
-    version: "0.1.0-rev.2".into(),
+    version: "0.1.0-rev.3".into(),
   };
   let stats = Stats {
     sessions: Vec::new(),
@@ -35,7 +35,7 @@ fn status_names_the_version_the_switch_and_the_window() {
   };
   assert_eq!(
     status_line(&health, &SETTINGS, &stats),
-    "bmo-cache-siren 0.1.0-rev.2 ready · armed · threshold 100,000 · 0 sessions · 2 sirens since 13:52:37"
+    "bmo-cache-siren 0.1.0-rev.3 ready · armed · threshold 100,000 · 0 sessions · 2 sirens since 13:52:37"
   );
   assert_eq!(
     settings_line(&Settings {
@@ -117,7 +117,7 @@ fn tail_pads_cuts_and_names_each_event() {
   assert_eq!(
     tail_lines(&page),
     [
-      "13:52:37 a-very-long- fcf2219e Opus 5    cold    + 150,000 read=        0 prefix_changed ⌨ check the build",
+      "13:52:37 a-very-long- 11111111 Opus 5    cold    + 150,000 read=        0 prefix_changed ⌨ check the build",
       "13:53:01 SIREN burst app,web +506,010 4 req in 60s (quiet)",
       "13:54:00 settings armed · ttl 3600000 ms · threshold 100,000",
     ]

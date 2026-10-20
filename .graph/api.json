@@ -17,8 +17,8 @@
       "service/client",
       "service/wire"
     ],
-    "base": "c8f952552cfbea6f25e4bac06a61212e637b54b7",
-    "changed": 1792498856333,
+    "base": "80000ffd70034e1c5910950cbda637e716de362b",
+    "changed": 1792510097723,
     "boundary": {
       "side": "exposes"
     }
@@ -46,8 +46,8 @@
     "needs": [
       "command/cli"
     ],
-    "base": "c8f952552cfbea6f25e4bac06a61212e637b54b7",
-    "changed": 1792498856339,
+    "base": "80000ffd70034e1c5910950cbda637e716de362b",
+    "changed": 1792510097725,
     "boundary": {
       "side": "exposes"
     }
@@ -72,8 +72,8 @@
       "engine/engine",
       "service/http"
     ],
-    "base": "c8f952552cfbea6f25e4bac06a61212e637b54b7",
-    "changed": 1792498856330,
+    "base": "80000ffd70034e1c5910950cbda637e716de362b",
+    "changed": 1792510097728,
     "boundary": {
       "side": "exposes"
     }
@@ -93,8 +93,8 @@
       "service/openapi",
       "surface/pages"
     ],
-    "base": "c8f952552cfbea6f25e4bac06a61212e637b54b7",
-    "changed": 1792498856328,
+    "base": "80000ffd70034e1c5910950cbda637e716de362b",
+    "changed": 1792510097730,
     "boundary": {
       "side": "exposes"
     }
@@ -121,8 +121,8 @@
     "needs": [
       "mcp/server"
     ],
-    "base": "c8f952552cfbea6f25e4bac06a61212e637b54b7",
-    "changed": 1792498856341,
+    "base": "80000ffd70034e1c5910950cbda637e716de362b",
+    "changed": 1792510097732,
     "boundary": {
       "side": "exposes"
     }
@@ -143,8 +143,8 @@
     "needs": [
       "service/openapi"
     ],
-    "base": "c8f952552cfbea6f25e4bac06a61212e637b54b7",
-    "changed": 1792498856336,
+    "base": "80000ffd70034e1c5910950cbda637e716de362b",
+    "changed": 1792510097735,
     "boundary": {
       "side": "exposes"
     }
