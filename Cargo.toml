@@ -4,7 +4,7 @@
 [package]
 name = "bmo-cache-siren"
 description = "Live watch of prompt-cache hits and new tokens per request, with a siren on sudden re-prefills"
-version = "0.2.0"
+version = "0.1.0-rev.1"
 edition = "2024"
 publish = false
 

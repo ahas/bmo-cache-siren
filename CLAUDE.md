@@ -39,8 +39,9 @@ porting. Read the document for an area before changing it.
   - `cargo check --all-targets`
   - `cargo test`
 - A change to any route, field or consumed contract in `docs/api.md` updates that document in the
-  same change and bumps the major version in `Cargo.toml`. A new config key or command-line flag goes
-  into `docs/configuration.md`.
+  same change and raises the version in `Cargo.toml` by one revision. Until the first release the
+  version is `0.1.0-rev.<n>`: `0.1.0` was the base, each later bump is one revision, and major, minor
+  and patch never move. A new config key or command-line flag goes into `docs/configuration.md`.
 - No personal paths, user names, user ids or host names in any file; the deploy files reach the
   home folder through `%h` or the `@HOME@` placeholder.
 - No test touches a live instance's port or data directory: a test that needs the server starts one

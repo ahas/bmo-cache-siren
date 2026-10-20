@@ -6,9 +6,11 @@ one realisation of it.
 
 ## Versioning
 
-The version is the one in `Cargo.toml` (semver). Any change to a contract stated here — a route,
-a query parameter, a body or response field, its type or meaning, an error code, an SSE event name —
-is a major version bump, and this document changes with it in the same commit.
+The version is the one in `Cargo.toml`. Until the first release it is `0.1.0` and counts revisions:
+`0.1.0` was the base, every later version bump is one revision written `0.1.0-rev.<n>`, and major,
+minor and patch never move, whatever the change. Any change to a contract stated here (a route, a
+query parameter, a body or response field, its type or meaning, an error code, an SSE event name)
+raises the revision by one, and this document changes with it in the same commit.
 
 ## Counterparts
 
