@@ -136,7 +136,7 @@ saves only about 5% overall.
 | Folder | Holds |
 | --- | --- |
 | `src` | the `cache_siren` library, with its client and MCP server, and the `bmo-cache-siren` binary |
-| `tests` | every test, with the in-process server the route tests start |
+| `tests` | every test, with the in-process server the route tests start and the repository-wide personal-data check |
 | `package` | the TypeScript client, generated from `docs/openapi.json` |
 | `skills` | the `bmo-cache-siren` skill, the harness plugin's instructions |
 | `web` | the live page and the demo page the daemon serves |
@@ -147,6 +147,8 @@ saves only about 5% overall.
 
 ## Documents
 
+- `PERSONAL-DATA.md`: the personal data no file may hold, the values it allows and the check that holds
+  the rule (`tests/personal_data.rs`).
 - `docs/api.md`: every HTTP route, the events, the client, the command and the harness plugin.
 - `docs/openapi.json`: the same API as an OpenAPI 3.1 contract, generated from the code.
 - `docs/configuration.md`: every config key, its default and when it takes effect.
