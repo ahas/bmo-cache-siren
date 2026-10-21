@@ -11,3 +11,5 @@ icon_*.jpg
 icon_*.bin
 icon_preview.png
 *.b64
+.graph/*
+!.graph/settings.toml
