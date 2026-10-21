@@ -86,6 +86,11 @@ The overlay is dragged from anywhere, resized from the bottom-right corner, and 
 its detail; the header's `—` hides it until the next `bmo-cache-siren restart`. The `local` button
 shows or leaves out rows of local models, and the browser keeps that choice.
 
+The web console's cache siren screen reads this API as a client does: the sums by session and the
+siren count from `GET /stats`, the switch and threshold from `GET /settings`, and the newest events
+from `GET /events` as a JSON page rather than as its stream. It shows no quota and no count of the
+files read, which the service does not keep; `docs/api.md` states what it reads and what it shows.
+
 ## Operations
 
 - The log in `~/.claude/cache-siren/cache-siren.log` has INFO, WARN and ERROR lines; access logging

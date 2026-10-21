@@ -248,6 +248,26 @@ Outside the API, served with no token:
   for the mute button. Neither ships with the repository; a missing one, or any other name, is 404
   `not-found`, and the page then shows a glyph in its place.
 
+## The console
+
+The web console's cache siren screen reads this API on the console's own server, with the bearer of
+the token file, and reads nothing else of the service:
+
+| Route | What the screen takes from it |
+| --- | --- |
+| `GET /stats` | the window's sums by session and `sirenCount`: its figures for cached share, cold requests and moving sessions |
+| `GET /settings` | `armed`, `ttlMs` and `threshold`: its warning line and the scale of its ten-minute chart |
+| `GET /events?limit=<n>` | the newest events as a page, asked with `Accept: application/json`; its request list, its last minute and its last ten minutes are counted from them |
+
+- **What the screen shows is what the service keeps.** It shows no quota and no count of the
+  transcript files read, since the service keeps neither. Its last minute and last ten minutes are
+  counted from the events it holds, so a window shorter than ten minutes fills only the minutes it
+  reaches.
+- **The screen takes no stream.** It asks the page again on its own clock, and never holds the
+  server-sent stream that `GET /events` answers by default.
+- **A row names no agent unless a runner's directory does.** The `scope` and `actorName` a caller
+  posts are the caller's own and are never read as an agent's name.
+
 ## The client
 
 The service publishes its client in two languages, both from `docs/openapi.json`:
