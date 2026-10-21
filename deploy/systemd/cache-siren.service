@@ -6,11 +6,11 @@ StartLimitIntervalSec=300
 StartLimitBurst=5
 
 [Service]
-# The deployed tree: bin/ holds the daemon, web/ the pages it serves. The config file stands in the data
-# root, kept across releases; the siren's own data directory is its default, ~/.claude/cache-siren, where
-# it writes the API token on its first start.
+# The deployed tree: bin/ holds the daemon, web/ the pages it serves. The data root is the daemon's data
+# directory, kept across releases: the config file, the event log, the offsets, the token and the sound
+# stand there. Nothing is written under the default data directory, ~/.claude/cache-siren.
 WorkingDirectory=%h/.local/share/bmo-cache-siren/deploy
-ExecStart=%h/.local/share/bmo-cache-siren/deploy/bin/bmo-cache-siren serve --config %h/.local/share/bmo-cache-siren/data/config.json --quiet
+ExecStart=%h/.local/share/bmo-cache-siren/deploy/bin/bmo-cache-siren serve --config %h/.local/share/bmo-cache-siren/data/config.json --data-dir %h/.local/share/bmo-cache-siren/data --quiet
 Restart=always
 RestartSec=5
 

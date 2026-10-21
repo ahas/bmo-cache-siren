@@ -67,3 +67,6 @@ same file. Every other key changes only by editing the file and restarting.
   `project_prefixes` names the leading part to cut, such as the encoded home directory.
 - `aplay` plays only WAV files: a host whose one player is `aplay` gives `siren_file` a WAV, or leaves
   it missing so the generated `siren.wav` plays.
+- The systemd unit passes `--data-dir` under the deployment's data root, so the config file and
+  everything the daemon writes stand in that one folder, kept across releases; `~/.claude/cache-siren`
+  is another installation's data directory and this unit writes nothing there.
