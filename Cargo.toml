@@ -1,5 +1,5 @@
 # The siren is one package: the library holds the daemon's parts, its client and its MCP server, and the
-# binary runs them. Every test lives in `tests/`. Versions follow the ones the bmo-next services already
+# binary runs them. Every test lives in `tests/`. Versions follow the ones the bmo services already
 # build with, so one cargo cache serves them all; nothing here reaches another repository.
 [package]
 name = "bmo-cache-siren"
