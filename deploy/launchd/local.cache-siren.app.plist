@@ -8,6 +8,8 @@
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>ThrottleInterval</key><integer>5</integer>
+  <!-- A stop waits for the overlay to end on its SIGTERM: 0 is never a kill after a span. -->
+  <key>ExitTimeOut</key><integer>0</integer>
   <key>StandardOutPath</key><string>@HOME@/.claude/cache-siren/overlay.out.log</string>
   <key>StandardErrorPath</key><string>@HOME@/.claude/cache-siren/overlay.err.log</string>
   <key>LimitLoadToSessionType</key><string>Aqua</string>

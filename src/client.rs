@@ -5,7 +5,6 @@
 //! other work.
 
 use std::fmt;
-use std::time::Duration;
 
 use reqwest::Method;
 use reqwest::blocking::{Client, RequestBuilder};
@@ -20,8 +19,6 @@ use crate::wire::{
 
 /// The address a client reaches where none is named.
 pub const DEFAULT_ADDRESS: &str = "http://127.0.0.1:9022";
-/// How long a call waits; a siren test plays and speaks before it answers, and is within it.
-const CALL_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// What a call came to short of the route's answer.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -66,7 +63,9 @@ impl SirenClient {
     SirenClient {
       address: address.into().trim_end_matches('/').to_string(),
       token: token.into(),
-      http: Client::builder().timeout(CALL_TIMEOUT).build().unwrap_or_default(),
+      // A call waits for its answer however long the daemon takes, a siren test that plays and speaks
+      // included: the blocking client's own default bound is taken off.
+      http: Client::builder().timeout(None).build().expect("a plain HTTP client builds"),
     }
   }
 

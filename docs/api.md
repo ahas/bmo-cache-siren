@@ -103,7 +103,8 @@ it.
 | `limit` | 1 to 1000; 100 where absent (the page only) |
 | `access_token` | the token, for a reader that cannot set a header |
 
-- **The stream.** By default the answer is server-sent events, held open until the reader leaves.
+- **The stream.** By default the answer is server-sent events, held open until the reader leaves or
+  the daemon stops.
   Each event's SSE `event` is its kind, its `id` the event number and its `data` the whole event.
   It starts after `after`, or after `Last-Event-ID`, or where no cursor is given with the next event
   recorded. A comment line every fifteen seconds keeps it open.
@@ -273,7 +274,9 @@ the token file, and reads nothing else of the service:
 The service publishes its client in two languages, both from `docs/openapi.json`:
 
 - **Rust:** the `client` module of the `cache_siren` library, one blocking call per route with the
-  wire types of the `wire` module. A refusal comes back with its status, `code` and `error`.
+  wire types of the `wire` module. A refusal comes back with its status, `code` and `error`. A call
+  waits for its answer however long the daemon takes, a siren test that plays and speaks included; it
+  ends short of one only where the connection is refused or breaks.
 - **TypeScript:** the `bmo-cache-siren-client` package in `package/`: the types `openapi-typescript`
   generates (`openapi.d.ts`, held to the document by a test) and a client over `openapi-fetch` that
   sends the token on every call.
@@ -339,7 +342,9 @@ read and never written. It reads:
 - summary lines, as a compact;
 - user lines, for the request label, images and tool results.
 
-Offsets are kept in the data directory, so a restart resumes where it stopped.
+Offsets are kept in the data directory, so a restart resumes where it stopped. On an interrupt or a
+termination request the daemon ends every open stream, waits for the answers under way, keeps the
+offsets and exits; its units wait for that end and never kill it after a span.
 
 ## Voice and sound
 

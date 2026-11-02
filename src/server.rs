@@ -42,6 +42,8 @@ pub struct App {
   token: String,
   /// Serialises settings changes, so the live settings and the file agree on the last one.
   settings_lock: Mutex<()>,
+  /// Turns true once the daemon stops, which ends every open stream.
+  stopping: watch::Sender<bool>,
 }
 
 impl App {
@@ -57,7 +59,13 @@ impl App {
       config_path,
       token: token.into(),
       settings_lock: Mutex::new(()),
+      stopping: watch::Sender::new(false),
     }
+  }
+
+  /// Ends every open stream, so a graceful stop waits only for the answers under way.
+  pub fn stop(&self) {
+    self.stopping.send_replace(true);
   }
 
   pub fn engine(&self) -> &Arc<Engine> {
@@ -222,6 +230,7 @@ async fn events(
   };
   let reader = Reader {
     changes: app.engine.subscribe(),
+    stopping: app.stopping.subscribe(),
     app,
     cursor: start,
     filter,
@@ -240,9 +249,11 @@ struct Reader {
   cursor: i64,
   filter: Filter,
   changes: watch::Receiver<i64>,
+  stopping: watch::Receiver<bool>,
 }
 
-/// Every event past the cursor that the filter lets through, as it is recorded, until the reader leaves.
+/// Every event past the cursor that the filter lets through, as it is recorded, until the reader leaves or
+/// the daemon stops.
 fn feed(reader: Reader) -> impl Stream<Item = Result<SseEvent, Infallible>> {
   stream::unfold(reader, |mut reader| async move {
     loop {
@@ -253,8 +264,13 @@ fn feed(reader: Reader) -> impl Stream<Item = Result<SseEvent, Infallible>> {
           events.iter().map(|event| Ok(sse_of(event))).collect();
         return Some((stream::iter(sent), reader));
       }
-      if reader.changes.changed().await.is_err() {
-        return None;
+      tokio::select! {
+        changed = reader.changes.changed() => {
+          if changed.is_err() {
+            return None;
+          }
+        }
+        _ = reader.stopping.wait_for(|stopping| *stopping) => return None,
       }
     }
   })

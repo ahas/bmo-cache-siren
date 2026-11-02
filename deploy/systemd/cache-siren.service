@@ -13,6 +13,9 @@ WorkingDirectory=%h/.local/share/bmo-cache-siren/deploy
 ExecStart=%h/.local/share/bmo-cache-siren/deploy/bin/bmo-cache-siren serve --config %h/.local/share/bmo-cache-siren/data/config.json --data-dir %h/.local/share/bmo-cache-siren/data --quiet
 Restart=always
 RestartSec=5
+# A stop ends the open streams and keeps the offsets before the daemon exits; the unit waits for that end
+# and never escalates to a kill.
+TimeoutStopSec=infinity
 
 [Install]
 WantedBy=default.target

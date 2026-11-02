@@ -315,12 +315,18 @@ fn run(serve: Serve, reach: &Reach) -> ExitCode {
 
   let web_dir = serve.web_dir.unwrap_or_else(|| root.join("web"));
   let app = Arc::new(App::new(engine.clone(), web_dir, Some(config_path), token));
+  let stopping = app.clone();
   let runtime = tokio::runtime::Runtime::new().expect("a runtime");
   let served = runtime.block_on(async {
     clocks::start(engine.clone());
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", port)).await?;
     log.info("listening", json!({"addr": format!("127.0.0.1:{port}")}));
-    axum::serve(listener, router(app)).with_graceful_shutdown(stopped()).await
+    // A stop ends the open streams, then waits for the answers under way to finish.
+    let stop = async move {
+      stopped().await;
+      stopping.stop();
+    };
+    axum::serve(listener, router(app)).with_graceful_shutdown(stop).await
   });
   engine.save();
   match served {

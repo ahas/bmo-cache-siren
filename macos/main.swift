@@ -81,7 +81,9 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKScript
 
     func load() {
         let address = BASE + "/#access_token=" + token()
-        web.load(URLRequest(url: URL(string: address)!, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 5))
+        // The load waits for the daemon's answer, ending only when the connection is refused or breaks; the
+        // request's idle interval is set past any span the overlay lives through.
+        web.load(URLRequest(url: URL(string: address)!, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: TimeInterval(Int32.max)))
     }
 
     func webView(_ w: WKWebView, didFail n: WKNavigation!, withError e: Error) { scheduleRetry("didFail \(e.localizedDescription)") }

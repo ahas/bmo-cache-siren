@@ -43,10 +43,12 @@ impl SirenServer {
     let base = format!("http://{}", listener.local_addr().unwrap());
     let (stop, stopped) = oneshot::channel::<()>();
     let routes = router(app.clone());
+    let stopping = app.clone();
     tokio::spawn(async move {
       let _ = axum::serve(listener, routes)
-        .with_graceful_shutdown(async {
+        .with_graceful_shutdown(async move {
           let _ = stopped.await;
+          stopping.stop();
         })
         .await;
     });

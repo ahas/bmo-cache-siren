@@ -159,6 +159,23 @@ async fn read_until(stream: &mut reqwest::Response, wanted: &[&str]) -> String {
 }
 
 #[tokio::test]
+async fn a_stop_ends_every_open_stream() {
+  let siren = SirenServer::start(None).await;
+  let mut stream = reqwest::Client::new()
+    .get(siren.url("/events"))
+    .bearer_auth(TOKEN)
+    .send()
+    .await
+    .unwrap();
+  assert_eq!(stream.status(), 200);
+
+  siren.app.stop();
+  while let Some(chunk) = stream.chunk().await.expect("the stream ends cleanly") {
+    assert!(!String::from_utf8_lossy(&chunk).contains("event:"), "nothing was recorded");
+  }
+}
+
+#[tokio::test]
 async fn the_stream_sends_each_event_and_resumes_after_the_last_one_read() {
   let siren = SirenServer::start(None).await;
   siren.post("/events", &usage("before", 1, 1)).await;
