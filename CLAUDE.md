@@ -46,7 +46,8 @@ document for an area before changing it.
   repository. `Cargo.toml` lists them and a test holds the list.
 - No Korean in any file of the checkout: code, comments, strings, tests, scripts, pages, deploy files,
   documents and root files alike; a test walks the whole checkout and enforces it.
-- Rust tests live in `tests/`, the package's in `package/tests/`. Check and test with:
+- Rust tests live in `tests/`, one test target, `tests/main.rs`, each file of tests a module of it (bmo-chat's
+  `docs/conventions.md`, 「Rust builds」); the package's live in `package/tests/`. Check and test with:
   - `cargo check --all-targets`
   - `cargo test`
   - `bun run check` in `package/`

@@ -1,9 +1,6 @@
 //! A real bmo-cache-siren HTTP server for one test: an ephemeral loopback port, a temporary data directory
 //! and its own config file, read the way the daemon reads it at start. No transcript is scanned and no
 //! background clock runs; only the routes do. The server stops when the value is dropped.
-//!
-//! Each test file uses the part it needs, so the rest reads as unused there.
-#![allow(dead_code)]
 
 use std::path::PathBuf;
 use std::sync::Arc;

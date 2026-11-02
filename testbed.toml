@@ -9,7 +9,7 @@ languages = ["cargo", "bun"]
 setup = ["bun install --frozen-lockfile --cwd package"]
 
 [check]
-quick = ["korean", "layout", "dependencies"]
+quick = ["korean", "layout", "dependencies", "cargo-profile"]
 # No file of the checkout holds Korean, so the ledger allows none anywhere.
 korean_ledger = "korean-ledger.json"
 # The siren builds on no other repository's library: every crate it names comes from the registry.

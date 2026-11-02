@@ -1,7 +1,7 @@
 //! The HTTP API as docs/api.md states it, over a real server: the token, the error shape, health, the
 //! events as a page and as a stream, the stats, the settings, the siren tests and the pages.
 
-mod siren_server;
+use crate::siren_server;
 
 use std::time::Duration;
 

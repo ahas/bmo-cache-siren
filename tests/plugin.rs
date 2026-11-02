@@ -2,7 +2,7 @@
 //! four the contract names, the OpenAPI document kept in docs/openapi.json, and the MCP server the binary
 //! starts.
 
-mod siren_server;
+use crate::siren_server;
 
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, Command, Stdio};
