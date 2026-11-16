@@ -47,10 +47,12 @@ document for an area before changing it.
 - No Korean in any file of the checkout: code, comments, strings, tests, scripts, pages, deploy files,
   documents and root files alike; a test walks the whole checkout and enforces it.
 - Rust tests live in `tests/`, one test target, `tests/main.rs`, each file of tests a module of it (bmo-chat's
-  `docs/conventions.md`, 「Rust builds」); the package's live in `package/tests/`. Check and test with:
-  - `cargo check --all-targets`
-  - `cargo test`
-  - `bun run check` in `package/`
+  `docs/conventions.md`, 「Rust builds」); the package's live in `package/tests/`. Check and test through the
+  testbed, which runs Cargo in the build directory every checkout shares. No Rust static step is declared
+  in `testbed.toml`: the testbed's own checks cover the formatter, the linter and the compile.
+  - `bmo check` for a change: the quick checks, the static checks it reaches and the tests it touches
+  - `bmo cargo test --all-targets` for the whole Rust suite
+  - `bun run check` in `package/` for the TypeScript client
 - `docs/openapi.json` is written by `bmo-cache-siren openapi`, and `package/openapi.d.ts` by
   `bun run generate` in `package/`; a test holds each to its source, so a change to a wire type
   writes both again.

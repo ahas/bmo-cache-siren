@@ -23,19 +23,10 @@ repository = "bmo-chat"
 reason = "The service's Rust client makes one blocking call per route, which reqwest's blocking feature serves; the shared line has no blocking client."
 line = 'reqwest = { version = "0.13.5", features = ["blocking", "json", "query", "stream"] }'
 
-[[check.step]]
-id = "check"
-command = "cargo check --all-targets"
-lane = "wide"
-
-[[check.step]]
-id = "clippy"
-command = "cargo clippy --all-targets -- -D warnings"
-lane = "wide"
-
-[[check.step]]
-id = "fmt"
-command = "cargo fmt --check"
+# No Rust static step is declared. The testbed's own Cargo workspace check formats and lints the crate a
+# change marks, every target compiled, through its Cargo verb in the shared build directory, and its change
+# check compiles every crate a change marks; plain cargo declared here would only compile cold, on every
+# deployment and on ones that touch no Rust.
 
 # The one binary serves the API, runs the command's verbs, starts the MCP server and prints the OpenAPI
 # document.
