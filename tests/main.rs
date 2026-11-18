@@ -9,7 +9,6 @@ mod burst;
 mod classify;
 mod cli_fmt;
 mod guards;
-mod personal_data;
 mod plugin;
 mod posted;
 mod scan;

@@ -37,7 +37,7 @@ document for an area before changing it.
 - `tests/`: every Rust test; `tests/siren_server/` is the in-process server the route tests start.
 - `docs/`: `api.md`, `openapi.json`, `configuration.md`, `porting.md`.
 - `PERSONAL-DATA.md`: the personal data no file may hold, the values it allows and the check that holds
-  the rule (`tests/personal_data.rs`).
+  the rule (the testbed's `personal-data` check).
 - `testbed.toml`: how the repository is checked, tested, built and deployed.
 
 ## Rules
@@ -62,7 +62,7 @@ document for an area before changing it.
   and patch never move. A new config key or command-line flag goes into `docs/configuration.md`.
 - No personal data in any tracked file, as `PERSONAL-DATA.md` states it: no mail address, home path,
   telephone number, token or private network address; the deploy files reach the home folder through
-  `%h` or the `@HOME@` placeholder. `tests/personal_data.rs` holds the rule and reports the file, the
+  `%h` or the `@HOME@` placeholder. The testbed's `personal-data` check holds the rule and reports the file, the
   line and the kind, never the value.
 - No test touches a live instance's port or data directory: a test that needs the server starts one
   through `tests/siren_server/`, on an ephemeral port with a temporary data directory.

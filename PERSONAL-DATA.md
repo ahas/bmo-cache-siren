@@ -14,7 +14,8 @@ stands in code, a comment, a document, a test fixture or a commit message.
 - **Only two values are allowed:** the owner's name `ahas` and the address `dev@ahas.io`. No other name,
   handle or address is.
 
-The repository's check holds it: `tests/personal_data.rs` reads every tracked file for a mail address, a
-home path, a telephone number, a token and a private network address. A finding names the file, the line
-and the kind, never the value. The check carries the patterns and the allowed values; no list of the
-values it forbids is kept in the repository.
+The testbed's `personal-data` check, which the declaration enables, holds it: it reads every tracked file
+for a mail address, a home path, a telephone number, a token and a private network address before
+anything is built. A finding names the file, the line and the kind, never the value. The forms are the
+testbed's policy and the declaration names the allowed address; no list of the values it forbids is kept
+in the repository.

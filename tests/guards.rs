@@ -25,7 +25,7 @@ const DEPENDENCIES: [&str; 15] = [
   "tokio",
 ];
 /// The crates only the tests use.
-const DEV_DEPENDENCIES: [&str; 2] = ["regex", "toml"];
+const DEV_DEPENDENCIES: [&str; 1] = ["toml"];
 
 /// Folders holding version control, build output and installed packages, not files of the repository.
 const UNGUARDED_DIRS: [&str; 5] = [".git", "target", "dist", ".build", "node_modules"];
