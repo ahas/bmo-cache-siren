@@ -28,4 +28,4 @@ value = "http://127.0.0.1:{{port.cache-siren.server}}"
 [[line]]
 file = "env/web-console.env"
 key = "CACHE_SIREN_TOKEN"
-value = "{{file.~/.local/share/bmo-cache-siren/data/token}}"
+value = "{{file.prefix:bmo-cache-siren/data/token}}"
