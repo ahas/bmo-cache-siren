@@ -1,5 +1,5 @@
 //! What holds for the whole checkout: the manifest names only registry crates from its own list, and no
-//! file holds Korean.
+//! file but the README's translations holds Korean.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -81,16 +81,23 @@ fn walk(dir: &Path, found: &mut Vec<PathBuf>) {
   }
 }
 
+/// Whether `path` is the README or one of its translations at the root, `README.md` or `README.<lang>.md`:
+/// the Korean one is Korean, and each names it in its language line.
+fn is_readme(path: &Path) -> bool {
+  let name = path.file_name().and_then(|name| name.to_str()).unwrap_or_default();
+  path.parent() == Some(Path::new(ROOT)) && name.starts_with("README") && name.ends_with(".md")
+}
+
 fn is_hangul(c: char) -> bool {
   HANGUL.iter().any(|&(low, high)| (low..=high).contains(&(c as u32)))
 }
 
 #[test]
-fn no_hangul_in_any_file_of_the_checkout() {
+fn no_hangul_in_any_file_of_the_checkout_but_the_readmes() {
   let mut files = Vec::new();
   walk(Path::new(ROOT), &mut files);
   let mut found = Vec::new();
-  for path in files {
+  for path in files.into_iter().filter(|path| !is_readme(path)) {
     let Ok(text) = fs::read_to_string(&path) else { continue };
     for (number, line) in text.lines().enumerate() {
       if line.chars().any(is_hangul) {

@@ -12,7 +12,7 @@ setup = ["bun install --frozen-lockfile --cwd package"]
 quick = ["korean", "layout", "dependencies", "cargo-profile", "shared-versions", "personal-data"]
 # The one address PERSONAL-DATA.md allows.
 personal_data_allowed = ["dev@ahas.io"]
-# No file of the checkout holds Korean, so the ledger allows none anywhere.
+# No code file of the checkout holds Korean, so the ledger allows none anywhere.
 korean_ledger = "korean-ledger.json"
 # The siren builds on no other repository's library: every crate it names comes from the registry.
 base_libraries = []

@@ -45,7 +45,8 @@ document for an area before changing it.
 - The daemon is built only from registry crates: no crate from a path, from git or of another `bmo-*`
   repository. `Cargo.toml` lists them and a test holds the list.
 - No Korean in any file of the checkout: code, comments, strings, tests, scripts, pages, deploy files,
-  documents and root files alike; a test walks the whole checkout and enforces it.
+  documents and root files alike; a test walks the whole checkout and enforces it. The README's
+  translations at the root (`README.ko.md` and its siblings) are the one exception.
 - Rust tests live in `tests/`, one test target, `tests/main.rs`, each file of tests a module of it (bmo-chat's
   `docs/conventions.md`, 「Rust builds」); the package's live in `package/tests/`. Check and test through the
   testbed, which runs Cargo in the build directory every checkout shares. No Rust static step is declared
