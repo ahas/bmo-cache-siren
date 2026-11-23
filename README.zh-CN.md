@@ -14,12 +14,7 @@ Claude Code 的会话记录,同时接收不留会话记录的运行器通过回�
 
 核心是一个用 Cargo 构建的 Rust 二进制文件,可在任何操作系统上运行。
 
-```
-cargo build --release
-target/release/bmo-cache-siren serve &
-xdg-open "$(target/release/bmo-cache-siren page)"      # macOS: open
-target/release/bmo-cache-siren status
-```
+在 BMO 机器上,守护进程由智能体按照索引的 INSTALL.md(`bmo install`,https://bmo.ahas.io/install.md)安装。
 
 守护进程监听 `127.0.0.1:9022`。首次运行时,它会把包含全部默认值和一个随机 API 令牌的 `config.json` 写入数据目录;
 每个配置键以及 `serve` 的每个参数都列在 `docs/configuration.md` 中。浏览器页面就是实时表格,用 `page` 打印出的

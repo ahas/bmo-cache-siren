@@ -17,12 +17,7 @@ before anyone notices. The siren makes that visible as it happens.
 
 The core is one Rust binary, built with Cargo, and runs on any OS.
 
-```
-cargo build --release
-target/release/bmo-cache-siren serve &
-xdg-open "$(target/release/bmo-cache-siren page)"      # macOS: open
-target/release/bmo-cache-siren status
-```
+On a BMO machine the daemon is installed by an agent with the index's INSTALL.md (`bmo install`, https://bmo.ahas.io/install.md).
 
 The daemon listens on `127.0.0.1:9022`. On first run it writes `config.json` with every default and a
 random API token into its data directory; `docs/configuration.md` lists each key and each flag of

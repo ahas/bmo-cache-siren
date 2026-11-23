@@ -17,12 +17,7 @@
 
 中核は Cargo でビルドする Rust バイナリ 1 つで、どの OS でも動作します。
 
-```
-cargo build --release
-target/release/bmo-cache-siren serve &
-xdg-open "$(target/release/bmo-cache-siren page)"      # macOS: open
-target/release/bmo-cache-siren status
-```
+BMO のマシンでは、エージェントがインデックスの INSTALL.md（`bmo install`、https://bmo.ahas.io/install.md）でデーモンをインストールします。
 
 デーモンは `127.0.0.1:9022` で待ち受けます。初回起動時に、すべてのデフォルト値とランダムな API トークンを含む
 `config.json` をデータディレクトリに書き出します。各キーと `serve` の各フラグは `docs/configuration.md` に
