@@ -156,9 +156,3 @@ CLAUDE_CODE_MAX_SUBAGENTS_PER_SESSION=20    # a safety net
 - `docs/openapi.json`: 같은 API를 코드에서 생성한 OpenAPI 3.1 계약.
 - `docs/configuration.md`: 모든 설정 키, 기본값, 적용 시점.
 - `docs/porting.md`: OS와 무관한 부분, macOS 전용 부분, 외부 서비스에 의존하는 부분, 그리고 Linux에서 실행하는 방법.
-
-## 출처
-
-이 프로젝트는 its original author의 cache-siren에서 파생했습니다.
-원 프로젝트가 여기서 설명하는 데몬, 오버레이, 분류, 팬아웃 측정을 설계하고 만들었습니다. Rust 데몬은 그 설계를
-이어받습니다. `NOTICE`를 참고하십시오.

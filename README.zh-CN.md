@@ -145,8 +145,3 @@ CLAUDE_CODE_MAX_SUBAGENTS_PER_SESSION=20    # a safety net
 - `docs/openapi.json`:同一 API 的 OpenAPI 3.1 契约,由代码生成。
 - `docs/configuration.md`:每个配置键、其默认值以及何时生效。
 - `docs/porting.md`:哪些部分与操作系统无关,哪些仅限 macOS,哪些依赖外部服务,以及如何在 Linux 上运行。
-
-## 致谢
-
-本项目派生自 its original author 的 cache-siren,这里描述的守护进程、
-悬浮窗、分类方法和扇出测量均由原项目设计和构建。Rust 守护进程延续了这一设计。详见 `NOTICE`。

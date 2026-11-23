@@ -1,10 +1,6 @@
 //! bmo-cache-siren: a live watch of prompt-cache hits and new tokens per model request, sounding a siren
 //! when new tokens jump. `docs/api.md` states every route, the client, the command and the harness plugin,
 //! `docs/configuration.md` every key.
-//!
-//! Derived from cache-siren, who designed
-//! and built the daemon, the overlay, the live page, the request classification and the cause
-//! attribution; the repository's NOTICE gives the credit in full.
 
 pub mod attribution;
 pub mod burst;

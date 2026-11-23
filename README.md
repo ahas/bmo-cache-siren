@@ -160,9 +160,3 @@ saves only about 5% overall.
 - `docs/configuration.md`: every config key, its default and when it takes effect.
 - `docs/porting.md`: what is OS-independent, what is macOS only, what depends on outside services,
   and how to run on Linux.
-
-## Credits
-
-This project is derived from cache-siren, which designed and built the daemon, the overlay,
-the classification and the fan-out measurements described here. The Rust daemon carries that design
-forward. See `NOTICE`.

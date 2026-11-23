@@ -156,9 +156,3 @@ CLAUDE_CODE_MAX_SUBAGENTS_PER_SESSION=20    # a safety net
 - `docs/openapi.json`:同じ API を、コードから生成した OpenAPI 3.1 の契約として記述したもの。
 - `docs/configuration.md`:すべての設定キー、そのデフォルト値、反映されるタイミング。
 - `docs/porting.md`:OS に依存しない部分、macOS 専用の部分、外部サービスに依存する部分、そして Linux での動かし方。
-
-## クレジット
-
-このプロジェクトは its original author による cache-sirenから派生した
-ものです。ここで説明しているデーモン、オーバーレイ、分類、ファンアウトの計測は、元のプロジェクトが設計し、構築
-しました。Rust のデーモンはその設計を受け継いでいます。`NOTICE` を参照してください。
