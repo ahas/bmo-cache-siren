@@ -29,7 +29,7 @@ async fn the_client_calls_every_route_and_reads_a_refusal() {
   let client = siren.client();
   tokio::task::spawn_blocking(move || {
     let client = client();
-    assert_eq!(client.health().unwrap().version, env!("CARGO_PKG_VERSION"));
+    assert_eq!(client.health().unwrap().version, cache_siren::VERSION);
     let posted = client
       .create_usage(&NewUsage {
         session_id: "thread-1".into(),
@@ -170,7 +170,7 @@ async fn the_binary_serves_the_tools_over_mcp() {
     found.unwrap_or_else(|| panic!("no answer {id} among {answers:?}"))
   };
 
-  assert_eq!(by_id(1)["result"]["serverInfo"]["version"], json!(env!("CARGO_PKG_VERSION")));
+  assert_eq!(by_id(1)["result"]["serverInfo"]["version"], json!(cache_siren::VERSION));
   let listed: Vec<&Value> = by_id(2)["result"]["tools"]
     .as_array()
     .unwrap()

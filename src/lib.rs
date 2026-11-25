@@ -37,3 +37,11 @@ pub use models::{Backend, MODEL_NAMES, RATES, Rates, model_name, rate_for};
 pub use server::{App, router};
 pub use session::Session;
 pub use transcript::Origin;
+
+/// The version the siren's health, its MCP server and its command name: the set's version the build was
+/// made at, which the testbed hands the build as `BMO_VERSION`, else the manifest's placeholder (bmo-chat's
+/// `docs/conventions.md`, 「Versions」).
+pub const VERSION: &str = match option_env!("BMO_VERSION") {
+  Some(version) => version,
+  None => env!("CARGO_PKG_VERSION"),
+};

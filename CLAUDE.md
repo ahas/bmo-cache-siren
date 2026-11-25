@@ -58,9 +58,8 @@ document for an area before changing it.
   `bun run generate` in `package/`; a test holds each to its source, so a change to a wire type
   writes both again.
 - A change to any route, field or consumed contract in `docs/api.md` updates that document in the
-  same change and raises the version in `Cargo.toml` by one revision. Until the first release the
-  version is `0.1.0-rev.<n>`: `0.1.0` was the base, each later bump is one revision, and major, minor
-  and patch never move. A new config key or command-line flag goes into `docs/configuration.md`.
+  same change and moves no version: the version is the set's, read off the git tag when a build is made
+  (`docs/api.md`, 「Versioning」), and the version in `Cargo.toml` is a placeholder that never moves. A new config key or command-line flag goes into `docs/configuration.md`.
 - No personal data in any tracked file, as `PERSONAL-DATA.md` states it: no mail address, home path,
   telephone number, token or private network address; the deploy files reach the home folder through
   `%h` or the `@HOME@` placeholder. The testbed's `personal-data` check holds the rule and reports the file, the

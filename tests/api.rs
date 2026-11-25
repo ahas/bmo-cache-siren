@@ -74,7 +74,7 @@ async fn failures_answer_in_the_common_error_shape() {
 
   let (status, health) = siren.get("/health").await;
   assert_eq!(status, 200);
-  assert_eq!(health, json!({"ready": true, "reason": null, "version": env!("CARGO_PKG_VERSION")}));
+  assert_eq!(health, json!({"ready": true, "reason": null, "version": cache_siren::VERSION}));
 }
 
 #[tokio::test]

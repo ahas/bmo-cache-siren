@@ -187,7 +187,7 @@ async fn health() -> Response {
     &Health {
       ready: true,
       reason: None,
-      version: env!("CARGO_PKG_VERSION").into(),
+      version: crate::VERSION.into(),
     },
   )
 }

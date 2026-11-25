@@ -21,7 +21,7 @@ use serde_json::json;
 #[derive(Parser)]
 #[command(
   name = "bmo-cache-siren",
-  version,
+  version = cache_siren::VERSION,
   about = "Live watch of prompt-cache hits and new tokens per request"
 )]
 struct Cli {
@@ -321,7 +321,7 @@ fn run(serve: Serve, reach: &Reach) -> ExitCode {
   let config = load_config(&config_path, Config::defaults(data.root()), &log);
   log.info(
     "start",
-    json!({"pid": std::process::id(), "port": config.port, "version": env!("CARGO_PKG_VERSION"),
+    json!({"pid": std::process::id(), "port": config.port, "version": cache_siren::VERSION,
            "cfg": {"yellow_new_tokens": config.yellow_new_tokens, "red_new_tokens": config.red_new_tokens,
                    "burst_red_tokens": config.burst_red_tokens, "poll_s": config.poll_s}}),
   );
