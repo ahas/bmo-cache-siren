@@ -11,5 +11,6 @@ mod cli_fmt;
 mod guards;
 mod plugin;
 mod posted;
+mod reach;
 mod scan;
 mod siren;

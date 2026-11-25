@@ -302,9 +302,16 @@ answers it.
 | `restart` | restarts the daemon under launchd on macOS, systemd --user elsewhere |
 | `log [N]` | the last N lines of the daemon's log, 30 by default |
 
-Every verb takes `--address` (`CACHE_SIREN_ADDRESS`, default `http://127.0.0.1:9022`), `--token`
+Every verb takes `--address` (`CACHE_SIREN_ADDRESS`), `--config` (`CACHE_SIREN_CONFIG`), `--token`
 (`CACHE_SIREN_TOKEN`), `--token-file` (`CACHE_SIREN_TOKEN_FILE`) and `--data-dir`
 (`CACHE_SIREN_DATA_DIR`); a client's token is `--token`, else the token file's content.
+
+- **A client's address** is `--address`, else `http://127.0.0.1:` and the `port` of the config file the
+  daemon reads (`docs/configuration.md`), read as the daemon reads it: the file `--config` names, else
+  `config.json` in the data directory, else `config.json` in the install root, the first that stands. A
+  file that stands but does not read as a config gives the default port, as the daemon then runs on it.
+  Only where no config file stands is the address `http://127.0.0.1:9022`, the default port's.
+- **A verb never writes the config file;** only the daemon makes it, and `PATCH /settings` changes it.
 
 ## The harness plugin
 

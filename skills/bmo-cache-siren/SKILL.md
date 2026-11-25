@@ -19,7 +19,8 @@ Register the server with the harness as a stdio MCP server:
 bmo-cache-siren mcp
 ```
 
-It reaches the service at `http://127.0.0.1:9022` with the token in the service's token file. `--address`
+It reaches the service at the port the daemon's config file names (`--config`, else `config.json` in the data
+directory or the install root; 9022 where none stands) with the token in the service's token file. `--address`
 (`CACHE_SIREN_ADDRESS`) names another service, `--token` (`CACHE_SIREN_TOKEN`) gives the token itself, and
 `--token-file` or `--data-dir` say where the file is.
 

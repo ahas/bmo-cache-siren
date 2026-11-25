@@ -11,7 +11,7 @@ Keys the file leaves out keep their defaults; keys it adds are carried but unuse
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
-| `--config <file>` | `config.json` in the install root | the config file below |
+| `--config <file>` | `CACHE_SIREN_CONFIG`, else `config.json` in the install root | the config file below |
 | `--data-dir <dir>` | `CACHE_SIREN_DATA_DIR`, else `~/.claude/cache-siren` | the data directory the siren writes (`docs/api.md`, Data directory) |
 | `--token-file <file>` | `CACHE_SIREN_TOKEN_FILE`, else `token` in the data directory | the bearer token every API route takes; written with a new random token when missing |
 | `--web-dir <dir>` | `web/` in the install root | the pages the daemon serves |
@@ -21,7 +21,8 @@ Keys the file leaves out keep their defaults; keys it adds are carried but unuse
 The install root is the nearest folder above the binary that holds `web/index.html`, so an installed
 tree and a build inside the checkout both find their pages; the current directory where none does.
 
-The other verbs and their flags are in `docs/api.md`, under the command.
+The other verbs and their flags are in `docs/api.md`, under the command; they read the same config file
+for the port the daemon listens on.
 
 ## Keys
 

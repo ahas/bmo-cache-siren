@@ -17,9 +17,6 @@ use crate::wire::{
   WireError,
 };
 
-/// The address a client reaches where none is named.
-pub const DEFAULT_ADDRESS: &str = "http://127.0.0.1:9022";
-
 /// What a call came to short of the route's answer.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ClientFailure {

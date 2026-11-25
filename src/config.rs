@@ -64,6 +64,21 @@ fn whole<S: Serializer>(value: &f64, serializer: S) -> Result<S::Ok, S::Error> {
   }
 }
 
+/// The port the daemon listens on where its config file names none.
+pub const DEFAULT_PORT: u16 = 9022;
+
+/// The port the daemon reads from the config file at `path`, without writing it: the file's `port` over the
+/// defaults, the default port where the file does not read as a config, and none where no file stands.
+pub fn port_in(path: &Path) -> Option<u16> {
+  let text = match fs::read_to_string(path) {
+    Ok(text) => text,
+    Err(why) if why.kind() == io::ErrorKind::NotFound => return None,
+    Err(_) => return Some(DEFAULT_PORT),
+  };
+  let defaults = Config::defaults(Path::new("."));
+  Some(over_defaults(&defaults, &text).map_or(DEFAULT_PORT, |config| config.port))
+}
+
 impl Config {
   /// The defaults for a daemon whose data directory is `data_dir`, where the siren file is looked for.
   pub fn defaults(data_dir: &Path) -> Config {
@@ -72,7 +87,7 @@ impl Config {
     ttl_by_mode_model_s.insert("codex".into(), IndexMap::from([("gpt-5.6".into(), Number::from(1800))]));
     ttl_by_mode_model_s.insert("openrouter".into(), IndexMap::new());
     Config {
-      port: 9022,
+      port: DEFAULT_PORT,
       poll_s: 1.0,
       projects_globs: vec!["~/.claude/projects".into()],
       project_prefixes: Vec::new(),

@@ -7,8 +7,9 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use cache_siren::cli;
-use cache_siren::client::{DEFAULT_ADDRESS, SirenClient};
+use cache_siren::client::SirenClient;
 use cache_siren::clocks;
+use cache_siren::config::{DEFAULT_PORT, port_in};
 use cache_siren::paths::default_data_dir;
 use cache_siren::siren::{Settings as SirenSettings, Siren, ensure_siren_wav};
 use cache_siren::token::{read_or_make_token, read_token};
@@ -34,9 +35,12 @@ struct Cli {
 /// Where the service and its token are.
 #[derive(Args)]
 struct Reach {
-  /// The service's base address.
-  #[arg(long, global = true, env = "CACHE_SIREN_ADDRESS", default_value = DEFAULT_ADDRESS)]
-  address: String,
+  /// The service's base address [default: the loopback port the daemon's config file names]
+  #[arg(long, global = true, env = "CACHE_SIREN_ADDRESS")]
+  address: Option<String>,
+  /// The daemon's config file [default: config.json in the data directory, else in the install root]
+  #[arg(long, global = true, env = "CACHE_SIREN_CONFIG")]
+  config: Option<PathBuf>,
   /// The service's bearer token itself.
   #[arg(long, global = true, env = "CACHE_SIREN_TOKEN", hide_env_values = true)]
   token: Option<String>,
@@ -53,6 +57,27 @@ impl Reach {
     DataDir::new(self.data_dir.clone().unwrap_or_else(default_data_dir))
   }
 
+  /// The config file a verb reads the daemon's port from: the one named, else `config.json` in the data
+  /// directory, else in the install root, the first that stands.
+  fn config_read(&self) -> Option<PathBuf> {
+    if let Some(named) = &self.config {
+      return Some(named.clone());
+    }
+    [self.data().root().join("config.json"), install_root().join("config.json")]
+      .into_iter()
+      .find(|file| file.is_file())
+  }
+
+  /// The service's address: `--address`, else the loopback port the daemon's config file names, else the
+  /// default port's where no config file stands.
+  fn address(&self) -> String {
+    if let Some(named) = self.address.as_deref().filter(|named| !named.is_empty()) {
+      return named.to_owned();
+    }
+    let port = self.config_read().and_then(|file| port_in(&file)).unwrap_or(DEFAULT_PORT);
+    format!("http://127.0.0.1:{port}")
+  }
+
   fn token_file(&self) -> PathBuf {
     self.token_file.clone().unwrap_or_else(|| self.data().token())
   }
@@ -67,7 +92,7 @@ impl Reach {
   }
 
   fn client(&self) -> Result<SirenClient, String> {
-    Ok(SirenClient::new(&self.address, self.token()?))
+    Ok(SirenClient::new(self.address(), self.token()?))
   }
 }
 
@@ -141,9 +166,6 @@ enum Verb {
 
 #[derive(Args)]
 struct Serve {
-  /// The config file; created with the defaults when missing [default: config.json in the install root]
-  #[arg(long)]
-  config: Option<PathBuf>,
   /// The directory holding the pages [default: web/ in the install root]
   #[arg(long)]
   web_dir: Option<PathBuf>,
@@ -175,7 +197,7 @@ fn main() -> ExitCode {
     }
     Verb::Page => match reach.token() {
       Ok(token) => {
-        println!("{}", cli::page_address(&reach.address, &token));
+        println!("{}", cli::page_address(&reach.address(), &token));
         ExitCode::SUCCESS
       }
       Err(why) => unreached(&why),
@@ -294,7 +316,8 @@ fn run(serve: Serve, reach: &Reach) -> ExitCode {
     }
   };
   let log = Arc::new(Log::new(data.log(), serve.quiet));
-  let config_path = serve.config.unwrap_or_else(|| root.join("config.json"));
+  // The daemon's config file, `--config` on the command line, created with the defaults when missing.
+  let config_path = reach.config.clone().unwrap_or_else(|| root.join("config.json"));
   let config = load_config(&config_path, Config::defaults(data.root()), &log);
   log.info(
     "start",
