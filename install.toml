@@ -1,6 +1,6 @@
 # What installing the cache siren on a fresh machine needs, read by the testbed's install verb (bmo-testbed's
-# docs/install.md, 「The install declaration」). The daemon writes its own config.json with every default and its own
-# token into its data directory at its first start (docs/configuration.md), so no settings file is written here.
+# docs/install.md, 「The install declaration」). The daemon writes its own token into its data directory at its first
+# start, and reads the config.json there, every key it leaves out on its default (docs/configuration.md).
 
 install = 1
 
@@ -14,10 +14,17 @@ what = "Builds the daemon; the Rust toolchain from https://rustup.rs."
 program = "bun"
 what = "Installs the TypeScript client's packages at every release; the Bun runtime from https://bun.sh."
 
-# The daemon's default port, the one the config.json it writes names.
+# The daemon's default port, preferred; the one chosen is written into its config file.
 [[port]]
 name = "cache-siren.server"
 number = 9022
+
+# The config file the unit hands the daemon, naming the port the install chose and nothing else.
+[[settings]]
+file = "prefix:bmo-cache-siren/data/config.json"
+text = """
+{ "port": {{port.cache-siren.server}} }
+"""
 
 # The console reaches the daemon with the token it mints at its first start, so these lines wait until it stands.
 [[line]]

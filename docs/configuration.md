@@ -70,3 +70,5 @@ same file. Every other key changes only by editing the file and restarting.
 - The systemd unit passes `--data-dir` under the deployment's data root, so the config file and
   everything the daemon writes stand in that one folder, kept across releases; `~/.claude/cache-siren`
   is another installation's data directory and this unit writes nothing there.
+- An install writes that config file before the first start, naming only `port`, the port it chose for
+  the siren, which it also gives the console; every other key keeps its default.
