@@ -1,6 +1,6 @@
 ---
 name: bmo-cache-siren
-description: Read how well a harness's prompt cache is holding, and widen or narrow the siren that sounds when new tokens jump, with the bmo-cache-siren MCP server. Use when a task asks why a session is spending so many tokens, whether a session's cache is being reused or re-prefilled, which sessions went cold, or when the cache siren should be quieted, armed again or given another threshold or cache lifetime.
+description: How the bmo-cache-siren MCP tools read how well a harness's prompt cache holds, by session and event, and widen or narrow the siren that sounds when new tokens jump, with the arguments each takes.
 ---
 
 # bmo-cache-siren
