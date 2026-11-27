@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "bmo-cache-siren",
-    "version": "0.1.0-rev.3",
+    "version": "0.0.0",
     "description": "A live watch of prompt-cache hits and new tokens per model request, sounding a siren when new tokens jump. It tails harness transcripts and takes the usage a runner posts; a watched session is a harness session named by sessionId with its modelName. It calls no other service. Bodies are JSON with camelCase keys; times are integers of epoch milliseconds. A page is items and more. Every failure is answered in the error shape with its status. The pages and their assets are its own screen (x-pages), outside the API. The harness plugin's tools, each a thin call of one route, are stated under x-tools."
   },
   "servers": [
